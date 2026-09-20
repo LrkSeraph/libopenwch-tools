@@ -1,5 +1,8 @@
-# Build artefacts — the binary lands in build/ alongside its objects
+# Build artefacts — the binary lands in build/ alongside its objects.
+# The bare name is listed too: an older build put it in the repository
+# root, and a stale one must never be committed again.
 build/
+wchlink
 *.o
 *.d
 
