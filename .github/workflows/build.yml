@@ -1,0 +1,53 @@
+# Build and test libopenwch-tools.
+#
+# Unlike libopenwch, this repository needs libusb to build, so the dependency
+# is installed here.  The tool's own tests need no hardware: they cover the
+# chip table and the command-line contract, which is everything that can be
+# checked without a WCH-LinkE.
+
+name: build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: host build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libusb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libusb-1.0-0-dev pkg-config
+
+      - name: Report the toolchain
+        run: |
+          cc --version | head -1
+          pkg-config --modversion libusb-1.0
+
+      - name: Build
+        run: make
+
+      - name: Test
+        run: make test
+
+      # Guards the "-dev package missing" path: the build must also work with
+      # libusb supplied by hand, which is how it is built on a machine that
+      # only has the runtime library.
+      - name: Build with libusb supplied by hand
+        run: |
+          make clean
+          make LIBUSB_CFLAGS="$(pkg-config --cflags libusb-1.0)" \
+               LIBUSB_LIBS="$(pkg-config --libs libusb-1.0)"
+
+      - name: Check the CLI is sane with no hardware
+        run: |
+          ./wchlink --version
+          ./wchlink chips | head -3
+          # No programmer here, so this must be exit 3 and must not crash.
+          ./wchlink info || test $? -eq 3

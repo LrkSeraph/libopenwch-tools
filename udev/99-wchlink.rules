@@ -1,0 +1,24 @@
+# WCH-LinkE permissions for libopenwch-tools.
+#
+# Without these, libusb can see the programmer but cannot open it, and wchlink
+# reports "present but could not be opened".  Install with:
+#
+#     make install-udev-rules
+#
+# or copy this file to /etc/udev/rules.d/ and replug the programmer.
+#
+# GROUP="plugdev" is the Debian/Ubuntu convention.  On a distribution without
+# it, change the group to one you are in (often "uucp" or your own user's
+# group), or use TAG+="uaccess" on a systemd distribution where that is
+# supported.
+
+# WCH-LinkE in RISC-V debug mode -- the mode that flashes WCH RISC-V parts.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="8010", MODE="0660", GROUP="plugdev"
+
+# WCH-LinkE in ARM/SWD mode.  Listed so the tool can report the programmer and
+# tell the user to switch it, rather than pretending nothing is attached.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="8012", MODE="0660", GROUP="plugdev"
+
+# The USB ISP bootloader, which some parts present instead of a probe.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="4348", ATTRS{idProduct}=="55e0", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55e0", MODE="0660", GROUP="plugdev"

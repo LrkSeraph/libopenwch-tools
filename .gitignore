@@ -1,0 +1,11 @@
+# Build artefacts
+build/
+wchlink
+*.o
+*.d
+
+# Editors
+*.swp
+*~
+.cache/
+compile_commands.json

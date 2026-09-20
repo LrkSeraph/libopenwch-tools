@@ -1,0 +1,57 @@
+# libopenwch formatting
+#
+# clang-format is the authority on formatting.  It runs from the pre-commit
+# hook (.git/hooks/pre-commit) and never in CI.
+# The tree is kept clang-format clean, so `clang-format --dry-run -Werror`
+# over any tracked .c/.h file should report nothing.
+#
+# What that produces for function definitions:
+#
+#     int foo(int a) {
+#     }
+#
+# and, when a signature does not fit in 80 columns, a break after the
+# declaration specifiers with the parameters aligned under the open paren:
+#
+#     __attribute__((weak)) void
+#     bar(int aaaaaaaaaaaaaaaaaaaaaaaaaa,
+#         int bbbbbbbbbbbbbbbbbbbbbbbbbb) {
+#     	foo(a);
+#     }
+#
+# Two things clang-format cannot express, which were therefore given up when
+# it became the formatter:
+#
+#   * a closing ") {" on a line of its own -- no such option exists, so
+#     parameters align under the open paren and ')' stays on the last one;
+#   * GNU __attribute__((...)) on a line of its own -- BreakAfterAttributes
+#     below applies to C++ [[...]] attributes and leaves GNU ones attached.
+#
+# BreakAfterAttributes needs clang-format 17 or newer; older releases ignore it.
+#
+# Generated sources are excluded on purpose -- both the pre-commit hook and
+# `make stylecheck` skip include/libopenwch/*/nvic.h, lib/*/vector_handlers.c,
+# lib/*/vector_names.c and include/libopencmsis/*/irqhandlers.h.  They are
+# untracked build artifacts produced by scripts/irq2nvic_h, and having the
+# generator shell out to clang-format would make the build depend on whether
+# clang-format happens to be installed.  The generator emits its own layout,
+# which is also a good deal more readable for the generated tables than the
+# packed grid clang-format would produce.
+BasedOnStyle: LLVM
+IndentWidth: 8
+TabWidth: 8
+UseTab: Always
+ColumnLimit: 80
+BreakBeforeBraces: Attach
+BreakAfterAttributes: Always
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: false
+BinPackParameters: false
+AllowAllParametersOfDeclarationOnNextLine: false
+IndentCaseLabels: false
+PointerAlignment: Right
+AlignAfterOpenBracket: Align
+SpaceBeforeParens: ControlStatements
+SortIncludes: false
+ReflowComments: false

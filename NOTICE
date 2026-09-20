@@ -1,0 +1,69 @@
+libopenwch-tools — provenance and licensing
+===========================================
+
+What this repository is
+-----------------------
+
+Host-side tools for WCH RISC-V microcontrollers, of which the first is
+`wchlink`, a command-line flasher for the WCH-LinkE programmer.  It is a
+companion to libopenwch and a separate work: libopenwch is target code for the
+MCU, this is PC software.
+
+Licence
+-------
+
+  Everything in this repository       LGPL-3.0-or-later     LICENSE
+
+`LICENSE` carries the GNU LGPL version 3 text, matching libopenwch.
+
+A standalone program is more conventionally GPL-3.0-or-later than LGPL, since
+the LGPL's additional permission is about linking a *library* into proprietary
+code.  The licence here was chosen to match libopenwch; see the README if you
+want it changed.
+
+Original work
+-------------
+
+All source in `src/`, `tests/`, `udev/` and the build files is original to
+this project.  There is no copied third-party source in this repository.
+
+Protocol knowledge, not code
+----------------------------
+
+The WCH-LinkE protocol is proprietary and undocumented by WCH.  It was
+reverse-engineered by the community, and the following projects were consulted
+to establish the **facts** of the interface — USB vendor and product
+identifiers, the debug-register access shape, flash command sequencing, the
+mode-switch mechanism.  Their source was read as documentation.  No code was
+copied, and none of it is present here.
+
+  minichlink (ch32fun)          https://github.com/cnlohr/ch32fun
+                                MIT.  The most complete open implementation,
+                                and the reference for which operations a
+                                WCH-LinkE flasher has to perform.
+
+  wlink                         https://github.com/Community-PIO-CH32V/wlink
+                                and https://github.com/ch32-rs/wlink
+                                Open-source WCH-Link libraries in Rust.
+
+  riscv-openocd-wch             https://github.com/Seneral/riscv-openocd-wch
+                                An OpenOCD fork with WCH-Link support.
+
+  openocd-hacks                 https://github.com/karlp/openocd-hacks
+                                Early notes on the DMI operations.
+
+Register addresses, USB identifiers and command encodings are interface facts
+and are not copyrightable expression.  This is the same position libopenwch
+takes with respect to WCH's EVT packages, and it is recorded here for the same
+reason: so a reader can tell what is original from what was learned elsewhere.
+
+libusb
+------
+
+This program links against libusb, which is LGPL-2.1-or-later.  It is used as a
+shared library and is not distributed here; the header is read from the system
+or supplied by the user at build time.  No part of libusb is vendored into this
+repository.
+
+WCH's name and the WCH-LinkE are WCH's.  This project is not affiliated with or
+endorsed by Nanjing Qinheng Microelectronics.
