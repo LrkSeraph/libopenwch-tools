@@ -21,6 +21,9 @@ USB code of its own.
 make
 ```
 
+The binary lands at `build/wchlink`.  `make install` puts it in
+`$(PREFIX)/bin` and installs the udev rules alongside.
+
 libusb is found through `pkg-config`.  If you only have the runtime library
 (the `-dev` package is what provides `libusb-1.0.so` and the header), override
 both variables:

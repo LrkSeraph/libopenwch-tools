@@ -47,7 +47,7 @@ jobs:
 
       - name: Check the CLI is sane with no hardware
         run: |
-          ./wchlink --version
-          ./wchlink chips | head -3
+          ./build/wchlink --version
+          ./build/wchlink chips | head -3
           # No programmer here, so this must be exit 3 and must not crash.
-          ./wchlink info || test $? -eq 3
+          ./build/wchlink info || test $? -eq 3

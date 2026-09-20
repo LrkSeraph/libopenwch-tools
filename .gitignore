@@ -1,6 +1,5 @@
-# Build artefacts
+# Build artefacts — the binary lands in build/ alongside its objects
 build/
-wchlink
 *.o
 *.d
 

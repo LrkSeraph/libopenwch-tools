@@ -37,13 +37,17 @@ LDLIBS		+= $(LIBUSB_LIBS)
 BUILD_DIR	?= build
 PROJECT		= wchlink
 
+## The binary lives under build/ alongside the objects.  libopenwch's template
+## looks for it there: $(OPENWCH_DIR)/tools/wchlink/build/wchlink.
+TARGET		= $(BUILD_DIR)/$(PROJECT)
+
 SRCS		= src/main.c src/log.c src/target.c src/usb.c src/linke.c
 OBJS		= $(SRCS:src/%.c=$(BUILD_DIR)/%.o)
 DEPS		= $(OBJS:.o=.d)
 
-all: $(PROJECT)
+all: $(TARGET)
 
-$(PROJECT): $(OBJS)
+$(TARGET): $(OBJS)
 	@printf "  LD      $@\n"
 	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
@@ -54,12 +58,12 @@ $(BUILD_DIR)/%.o: src/%.c
 
 ## Host-side unit tests.  No hardware: these cover the parts that are pure
 ## logic (the chip table and the command line), so they run anywhere.
-test: $(PROJECT)
+test: $(TARGET)
 	@printf "  TEST    tests/\n"
-	$(Q)$(MAKE) -C tests run PROJECT=$(abspath $(PROJECT))
+	$(Q)$(MAKE) -C tests run PROJECT=$(abspath $(TARGET))
 
-install: $(PROJECT)
-	$(Q)install -D -m 0755 $(PROJECT) $(DESTDIR)$(PREFIX)/bin/$(PROJECT)
+install: $(TARGET)
+	$(Q)install -D -m 0755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(PROJECT)
 	$(Q)install -D -m 0644 udev/99-wchlink.rules \
 		$(DESTDIR)$(PREFIX)/lib/udev/rules.d/99-wchlink.rules
 
@@ -72,7 +76,6 @@ install-udev-rules:
 
 clean:
 	$(Q)$(RM) -r $(BUILD_DIR)
-	$(Q)$(RM) $(PROJECT)
 	$(Q)$(MAKE) -C tests clean
 
 PREFIX		?= /usr/local
