@@ -37,8 +37,9 @@ LDLIBS		+= $(LIBUSB_LIBS)
 BUILD_DIR	?= build
 PROJECT		= wchlink
 
-## The binary lives under build/ alongside the objects.  libopenwch's template
-## looks for it there: $(OPENWCH_DIR)/tools/wchlink/build/wchlink.
+## The binary lives under build/ alongside the objects.  Its consumers look for
+## it there: libopenwch-template carries this repository as the
+## tools/wchlink submodule and runs tools/wchlink/build/wchlink.
 TARGET		= $(BUILD_DIR)/$(PROJECT)
 
 SRCS		= src/main.c src/log.c src/target.c src/usb.c src/linke.c
