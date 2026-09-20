@@ -42,7 +42,8 @@ PROJECT		= wchlink
 ## tools/wchlink submodule and runs tools/wchlink/build/wchlink.
 TARGET		= $(BUILD_DIR)/$(PROJECT)
 
-SRCS		= src/main.c src/log.c src/target.c src/usb.c src/linke.c
+SRCS		= src/main.c src/log.c src/target.c src/usb.c src/usb_link.c \
+		  src/linke.c src/dm.c src/flash.c src/flash_ch32v0.c
 OBJS		= $(SRCS:src/%.c=$(BUILD_DIR)/%.o)
 DEPS		= $(OBJS:.o=.d)
 

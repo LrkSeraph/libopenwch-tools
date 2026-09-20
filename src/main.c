@@ -20,10 +20,14 @@
 /*
  * wchlink -- drive a WCH-LinkE from the command line.
  *
- * Milestone 1 implements `info` and `chips`, which need only USB discovery.
- * The flashing commands are wired up, argument-checked, and then report that
- * they are not implemented yet: the protocol is milestone 2 and 3 work, and it
- * cannot be written honestly without a programmer to test against.
+ * `info`, `chips`, `flash`, `read`, `reset` and `unbrick` are implemented.
+ * Flashing is implemented for the CH32V00x family; the other families this
+ * table knows about are rejected with an explanation rather than written to
+ * with a sequence nobody has checked.
+ *
+ * None of the flashing paths has been run against a real part yet: the
+ * protocol and the algorithm are exercised end to end against the simulated
+ * programmer in tests/, which is as far as a machine without hardware can go.
  *
  * Exit status:
  *   0  success
@@ -38,6 +42,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "flash.h"
 #include "linke.h"
 #include "log.h"
 #include "target.h"
@@ -47,9 +52,10 @@
 
 static const char *program_name = "wchlink";
 
-/** Where the tool is in its development.  Printed by --help and info. */
+/** What this build can and cannot do.  Printed by --help and info. */
 static const char *const milestone_note =
-    "milestone 1: device discovery only; flashing arrives in milestone 3";
+    "flashes the CH32V00x family over a WCH-LinkE; not yet verified on "
+    "silicon";
 
 struct options {
 	const char *serial;
@@ -71,20 +77,20 @@ static void usage(FILE *out) {
 	    "  info                 report the programmer and, with --chip, "
 	    "the target\n"
 	    "  chips                list the parts this tool knows about\n"
-	    "  flash <file.bin>     write a binary image to flash (milestone "
-	    "3)\n"
-	    "  read  <file.bin>     read target memory back (milestone 2)\n"
-	    "  reset                reset the target (milestone 3)\n"
-	    "  unbrick              clear all code flash by power-cycling "
-	    "(milestone 3)\n"
+	    "  flash <file.bin>     write a binary image to flash\n"
+	    "  read  <file.bin>     read target memory into a file\n"
+	    "  reset                reset the target and let it run\n"
+	    "  unbrick              hold the target in reset and power-cycle "
+	    "it\n"
 	    "  terminal             single-wire debug terminal (milestone 4)\n"
 	    "\n"
 	    "Options:\n"
 	    "  -s, --serial <sn>    pick a programmer by serial number\n"
 	    "  -c, --chip <part>    target part, e.g. ch32v003 or ch582\n"
-	    "  -a, --address <addr> address, decimal or 0x-prefixed\n"
+	    "  -a, --address <addr> where to write, or what to read from\n"
 	    "  -n, --size <bytes>   number of bytes to read\n"
-	    "      --verify         read the image back and compare (flash)\n"
+	    "      --verify         read the image back and compare (default)\n"
+	    "      --no-verify      skip the read-back\n"
 	    "  -v, --verbose        show what is happening\n"
 	    "  -q, --quiet          errors only\n"
 	    "  -h, --help           this text\n"
@@ -177,13 +183,14 @@ static enum wl_status cmd_info(const struct options *opts) {
 	}
 
 	printf("programmer:\n");
-	printf("  usb:    %04x:%04x at bus %u address %u\n", link.usb.vid,
-	       link.usb.pid, link.usb.bus, link.usb.address);
-	printf("  mode:   %s\n", wl_usb_mode_name(link.usb.mode));
-	printf("  serial: %s\n",
-	       link.usb.serial[0] != '\0' ? link.usb.serial : "(not reported)");
-	printf("  product: %s\n", link.usb.product[0] != '\0'
-				      ? link.usb.product
+	printf("  usb:    %04x:%04x at bus %u address %u\n", link.info.vid,
+	       link.info.pid, link.info.bus, link.info.address);
+	printf("  mode:   %s\n", wl_usb_mode_name(link.info.mode));
+	printf("  serial: %s\n", link.info.serial[0] != '\0'
+				     ? link.info.serial
+				     : "(not reported)");
+	printf("  product: %s\n", link.info.product[0] != '\0'
+				      ? link.info.product
 				      : "(not reported)");
 
 	memset(version, 0, sizeof(version));
@@ -202,54 +209,282 @@ static enum wl_status cmd_info(const struct options *opts) {
 	return WL_OK;
 }
 
-static bool check_file_readable(const struct options *opts) {
-	struct stat st;
+/** Resolve --chip, or explain why a command cannot go on without it. */
+static const wl_chip_t *require_chip(const struct options *opts) {
+	const wl_chip_t *chip;
 
-	if (opts->file == NULL) {
-		wl_error("this command needs a file argument");
-		return false;
+	if (opts->chip == NULL) {
+		wl_error(
+		    "this command needs --chip, because the part decides the "
+		    "debug clock and the flash algorithm");
+		wl_error("try `%s chips` for the names", program_name);
+		return NULL;
 	}
 
-	if (stat(opts->file, &st) != 0) {
-		wl_error("cannot open '%s': %s", opts->file, strerror(errno));
-		return false;
+	chip = wl_chip_by_name(opts->chip);
+
+	if (chip == NULL) {
+		wl_error("unknown part '%s' (try `%s chips`)", opts->chip,
+			 program_name);
+		return NULL;
+	}
+
+	return chip;
+}
+
+/** Read a whole file into memory.  The caller frees it. */
+static enum wl_status
+read_file(const char *path, uint8_t **data, size_t *length) {
+	struct stat st;
+	FILE *file;
+	uint8_t *buffer;
+	size_t got;
+
+	if (stat(path, &st) != 0) {
+		wl_error("cannot open '%s': %s", path, strerror(errno));
+		return WL_ERR_USAGE;
 	}
 
 	if (!S_ISREG(st.st_mode)) {
-		wl_error("'%s' is not a regular file", opts->file);
-		return false;
+		wl_error("'%s' is not a regular file", path);
+		return WL_ERR_USAGE;
 	}
 
-	return true;
+	if (st.st_size == 0) {
+		wl_error("'%s' is empty", path);
+		return WL_ERR_USAGE;
+	}
+
+	buffer = malloc((size_t)st.st_size);
+
+	if (buffer == NULL) {
+		wl_error("cannot allocate %lld bytes for '%s'",
+			 (long long)st.st_size, path);
+		return WL_ERR_USAGE;
+	}
+
+	file = fopen(path, "rb");
+
+	if (file == NULL) {
+		wl_error("cannot open '%s': %s", path, strerror(errno));
+		free(buffer);
+		return WL_ERR_USAGE;
+	}
+
+	got = fread(buffer, 1, (size_t)st.st_size, file);
+	fclose(file);
+
+	if (got != (size_t)st.st_size) {
+		wl_error("short read on '%s': got %zu of %lld bytes", path, got,
+			 (long long)st.st_size);
+		free(buffer);
+		return WL_ERR_USAGE;
+	}
+
+	*data = buffer;
+	*length = got;
+
+	return WL_OK;
 }
 
-static enum wl_status cmd_not_yet(const struct options *opts,
-				  const char *what) {
+/** Write a buffer to a file. */
+static enum wl_status
+write_file(const char *path, const uint8_t *data, size_t length) {
+	FILE *file = fopen(path, "wb");
+
+	if (file == NULL) {
+		wl_error("cannot create '%s': %s", path, strerror(errno));
+		return WL_ERR_USAGE;
+	}
+
+	if (fwrite(data, 1, length, file) != length) {
+		wl_error("short write on '%s': %s", path, strerror(errno));
+		fclose(file);
+		return WL_ERR_USAGE;
+	}
+
+	if (fclose(file) != 0) {
+		wl_error("cannot finish writing '%s': %s", path,
+			 strerror(errno));
+		return WL_ERR_USAGE;
+	}
+
+	return WL_OK;
+}
+
+/**
+ * Print how far the write has got, on one line.
+ *
+ * At most one line per percent, so that a slow USB link does not spend its
+ * time printing, and nothing at all when the user asked for quiet.
+ */
+static void show_progress(size_t done, size_t total) {
+	static int last_percent = -1;
+	int percent;
+
+	if (wl_log_level() <= WL_LEVEL_QUIET || total == 0) {
+		return;
+	}
+
+	percent = (int)((done * 100u) / total);
+
+	if (percent == last_percent) {
+		return;
+	}
+
+	last_percent = percent;
+
+	if (done >= total) {
+		fprintf(stderr, "\r  written: 100%% (of %zu bytes)\n", total);
+	} else {
+		fprintf(stderr, "\r  writing: %3d%%", percent);
+	}
+
+	fflush(stderr);
+}
+
+static enum wl_status cmd_flash(const struct options *opts) {
+	const wl_chip_t *chip = require_chip(opts);
+	uint8_t *image = NULL;
+	size_t length = 0;
+	uint32_t address;
 	wl_linke_t link;
 	enum wl_status status;
 
+	if (chip == NULL) {
+		return WL_ERR_USAGE;
+	}
+
+	if (!wl_linke_can_flash(chip)) {
+		wl_error("flashing %s is not implemented in this build",
+			 chip->name);
+		wl_error("only the CH32V00x family has a flash sequence here; "
+			 "the other families need one that has been checked "
+			 "against a part");
+		return WL_ERR_NOT_IMPLEMENTED;
+	}
+
+	status = read_file(opts->file, &image, &length);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	address = opts->address_given ? opts->address : chip->flash_base;
+
 	/*
-	 * Validate everything that can be validated without the protocol, so
-	 * the command line a user writes today keeps working once the protocol
-	 * lands.
+	 * Check the request against the part before opening anything: an image
+	 * that cannot fit is the command line's problem, and saying so should
+	 * not depend on a programmer being plugged in.
 	 */
-	if (opts->chip != NULL && wl_chip_by_name(opts->chip) == NULL) {
-		wl_error("unknown part '%s' (try `%s chips`)", opts->chip,
-			 program_name);
+	if (!wl_flash_range_ok(chip, address, length)) {
+		wl_error("0x%08x + %zu bytes does not fit %s's %uK of flash",
+			 address, length, chip->name, chip->flash_size / 1024u);
+		free(image);
 		return WL_ERR_USAGE;
 	}
 
 	status = wl_linke_open(&link, opts->serial);
 
 	if (status != WL_OK) {
+		free(image);
 		return status;
 	}
 
+	wl_info("writing %zu bytes to %s at 0x%08x%s", length, chip->name,
+		address, opts->verify ? ", then reading it back" : "");
+
+	status = wl_linke_write_flash(&link, chip, address, image, length,
+				      opts->verify, show_progress);
+
+	wl_linke_close(&link);
+	free(image);
+
+	if (status == WL_OK) {
+		wl_info("done: %s now holds the image", chip->name);
+	}
+
+	return status;
+}
+
+static enum wl_status cmd_read(const struct options *opts) {
+	const wl_chip_t *chip = require_chip(opts);
+	uint32_t address;
+	uint8_t *buffer;
+	wl_linke_t link;
+	enum wl_status status;
+
+	if (chip == NULL) {
+		return WL_ERR_USAGE;
+	}
+
+	if (!opts->address_given || !opts->size_given || opts->size == 0) {
+		wl_error("read needs --address and --size");
+		return WL_ERR_USAGE;
+	}
+
+	address = opts->address;
+	buffer = malloc(opts->size);
+
+	if (buffer == NULL) {
+		wl_error("cannot allocate %zu bytes", opts->size);
+		return WL_ERR_USAGE;
+	}
+
+	status = wl_linke_open(&link, opts->serial);
+
+	if (status != WL_OK) {
+		free(buffer);
+		return status;
+	}
+
+	wl_info("reading %zu bytes from 0x%08x", opts->size, address);
+
+	status = wl_linke_read_memory(&link, chip, address, buffer, opts->size);
+
 	wl_linke_close(&link);
 
-	wl_error("%s is not implemented yet (%s)", what, milestone_note);
+	if (status == WL_OK) {
+		status = write_file(opts->file, buffer, opts->size);
+	}
 
-	return WL_ERR_NOT_IMPLEMENTED;
+	free(buffer);
+
+	return status;
+}
+
+static enum wl_status cmd_reset(const struct options *opts) {
+	wl_linke_t link;
+	enum wl_status status = wl_linke_open(&link, opts->serial);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_linke_reset(&link);
+
+	wl_linke_close(&link);
+
+	if (status == WL_OK) {
+		wl_info("target reset");
+	}
+
+	return status;
+}
+
+static enum wl_status cmd_unbrick(const struct options *opts) {
+	wl_linke_t link;
+	enum wl_status status = wl_linke_open(&link, opts->serial);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_linke_unbrick(&link);
+
+	wl_linke_close(&link);
+
+	return status;
 }
 
 /* --- command line ------------------------------------------------------- */
@@ -408,25 +643,27 @@ int main(int argc, char **argv) {
 	} else if (strcmp(command, "info") == 0) {
 		status = cmd_info(&opts);
 	} else if (strcmp(command, "flash") == 0) {
-		status = check_file_readable(&opts)
-			     ? cmd_not_yet(&opts, "flash")
-			     : WL_ERR_USAGE;
-	} else if (strcmp(command, "read") == 0) {
-		if (!check_file_readable(&opts)) {
-			status = WL_ERR_USAGE;
-		} else if (!opts.address_given || !opts.size_given ||
-			   opts.size == 0) {
-			wl_error("read needs --address and --size");
+		if (opts.file == NULL) {
+			wl_error("flash needs a file argument");
 			status = WL_ERR_USAGE;
 		} else {
-			status = cmd_not_yet(&opts, "read");
+			status = cmd_flash(&opts);
+		}
+	} else if (strcmp(command, "read") == 0) {
+		if (opts.file == NULL) {
+			wl_error("read needs a file argument");
+			status = WL_ERR_USAGE;
+		} else {
+			status = cmd_read(&opts);
 		}
 	} else if (strcmp(command, "reset") == 0) {
-		status = cmd_not_yet(&opts, "reset");
+		status = cmd_reset(&opts);
 	} else if (strcmp(command, "unbrick") == 0) {
-		status = cmd_not_yet(&opts, "unbrick");
+		status = cmd_unbrick(&opts);
 	} else if (strcmp(command, "terminal") == 0) {
-		status = cmd_not_yet(&opts, "terminal");
+		wl_error("the single-wire terminal is not implemented yet "
+			 "(milestone 4)");
+		status = WL_ERR_NOT_IMPLEMENTED;
 	} else {
 		wl_error("unknown command '%s'", command);
 		usage(stderr);

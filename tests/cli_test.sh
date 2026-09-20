@@ -115,6 +115,32 @@ if [ -n "$err" ] && [ "$status" = 3 ]; then
 	esac
 fi
 
+# --- flashing is refused before the bus is touched ----------------------
+
+# The CH5xx families have no flash algorithm in this build, and saying so
+# before opening a programmer means the message is the same with or without
+# hardware.  1 is "target or tool error"; 2 would mean the parser accepted a
+# command it should not, and 3 would mean it went looking for a programmer.
+tmp=$(mktemp)
+printf 'not a real image' >"$tmp"
+big=$(mktemp)
+head -c 32768 /dev/zero >"$big"
+
+"$PROJECT" flash "$tmp" --chip ch582 >/dev/null 2>&1
+check_exit "$?" "flash refuses a family with no algorithm" 1
+
+# An image that does not fit the part is a usage error, and is refused before
+# any hardware is touched -- so this answer does not depend on a programmer
+# being attached.
+"$PROJECT" flash "$big" --chip ch32v003 >/dev/null 2>&1
+check_exit "$?" "flash refuses an image that does not fit" 2
+
+# Without --chip there is nothing to select an algorithm with.
+"$PROJECT" flash "$tmp" >/dev/null 2>&1
+check_exit "$?" "flash without --chip is a usage error" 2
+
+rm -f "$tmp" "$big"
+
 echo "  $checks checks, $failures failure(s)"
 
 [ "$failures" -eq 0 ]

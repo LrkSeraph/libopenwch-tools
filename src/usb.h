@@ -20,74 +20,18 @@
 #ifndef WCHLINK_USB_H
 #define WCHLINK_USB_H
 
-#include <stddef.h>
-#include <stdint.h>
-
-#include <stdbool.h>
+#include "usb_info.h"
+#include "transport.h"
 
 /*
- * libusb's header lives in <libusb-1.0/libusb.h> when the -dev package is
- * installed, but on a host that only has the runtime library it may have to be
- * supplied another way -- see the LIBUSB_CFLAGS note in the Makefile.  Accept
- * both spellings so the build does not care which one is in reach.
+ * The USB half of the tool: libusb lives here and nowhere else.
+ *
+ * A programmer is described by wl_usb_info_t (usb_info.h) so that everything
+ * above this file -- and the tests -- can talk about one without linking a USB
+ * stack.  wl_usb_link_t is the open handle, and is opaque outside usb.c.
  */
-#if defined(__has_include)
-#if __has_include(<libusb-1.0/libusb.h>)
-#include <libusb-1.0/libusb.h>
-#else
-#include <libusb.h>
-#endif
-#else
-#include <libusb-1.0/libusb.h>
-#endif
 
-/** WCH's USB vendor ID, used by the programmer itself. */
-#define WL_USB_VID_WCH 0x1a86u
-
-/** WCH-LinkE while it is in RISC-V debug mode. */
-#define WL_USB_PID_LINK_RV 0x8010u
-
-/** WCH-LinkE while it is in ARM (SWD) mode. */
-#define WL_USB_PID_LINK_ARM 0x8012u
-
-/** Vendor ID the IAP bootloader presents. */
-#define WL_USB_VID_IAP 0x4348u
-
-/** Product ID of the IAP bootloader. */
-#define WL_USB_PID_IAP 0x55e0u
-
-/** How a LinkE is currently presenting itself. */
-enum wl_usb_mode {
-	WL_USB_MODE_RV = 0, /**< RISC-V debug, the mode we want */
-	WL_USB_MODE_ARM,    /**< ARM/SWD mode; needs a mode switch */
-	WL_USB_MODE_IAP,    /**< USB ISP bootloader instead of a probe */
-	WL_USB_MODE_UNKNOWN,
-};
-
-/** Longest serial number we keep, including the terminator. */
-#define WL_USB_SERIAL_MAX 64
-
-/** Longest product string we keep, including the terminator. */
-#define WL_USB_PRODUCT_MAX 128
-
-/** One programmer, as found on the bus. */
-typedef struct {
-	libusb_device_handle *handle; /**< set once opened, else NULL */
-	enum wl_usb_mode mode;
-	uint16_t vid;
-	uint16_t pid;
-	uint8_t bus;
-	uint8_t address;
-	bool opened;
-	char serial[WL_USB_SERIAL_MAX];
-	char product[WL_USB_PRODUCT_MAX];
-} wl_usb_link_t;
-
-/** Human-readable mode name, for messages. */
-const char *wl_usb_mode_name(enum wl_usb_mode mode);
-
-/** Whether a mode can actually flash a target. */
-bool wl_usb_mode_is_usable(enum wl_usb_mode mode);
+typedef struct wl_usb_link wl_usb_link_t;
 
 /**
  * Initialise libusb.  Call once, before anything else here.
@@ -101,32 +45,47 @@ void wl_usb_global_exit(void);
 /**
  * Enumerate the bus and collect every WCH programmer found.
  *
- * A device that cannot be opened is still reported -- its strings are simply
- * left empty -- because "your programmer is present but not accessible" is a
- * much better message than "no programmer found", and that is exactly what a
- * missing udev rule looks like.
+ * A device that cannot be opened is still reported, with @c accessible false:
+ * "your programmer is present but not accessible" is a much better message
+ * than "no programmer found", and that is exactly what a missing udev rule
+ * looks like.
  *
- * @param links      array to fill
+ * @param found      array to fill
  * @param max_links  its capacity
- * @param found      receives how many were stored
  * @return 0 on success, or a libusb error code
  */
-int wl_usb_scan(wl_usb_link_t *links, size_t max_links, size_t *found);
+int wl_usb_scan(wl_usb_info_t *found, size_t max_links, size_t *count);
 
 /**
- * Open a programmer and read its string descriptors.
+ * Open a programmer and claim its interface.
  *
- * The USB interface is not claimed here: that belongs with the protocol
- * layer, which is the only thing that knows when it is finished with it.
+ * Claiming is what makes bulk transfers work, and it is done here because this
+ * is the layer that knows when the programmer is finished with.
  *
  * @return 0 on success, or a libusb error code
  */
-int wl_usb_open(wl_usb_link_t *link);
+int wl_usb_open(const wl_usb_info_t *info, wl_usb_link_t **out);
 
-/** Close a programmer opened with wl_usb_open(). */
+/** Release the interface and close a programmer. */
 void wl_usb_close(wl_usb_link_t *link);
 
 /** Short libusb error text for a negative return code. */
 const char *wl_usb_strerror(int code);
+
+/**
+ * Whether an error code means "present but not permitted".
+ *
+ * Exists so that callers can report a permissions problem without including
+ * libusb's header to compare against its constants.
+ */
+bool wl_usb_error_is_access(int code);
+
+/**
+ * The real transport, over the programmer's bulk endpoints.
+ *
+ * Its context is a wl_usb_link_t, so a transport outlives nothing: closing the
+ * link closes the transport with it.
+ */
+const struct wl_transport *wl_usb_transport(void);
 
 #endif /* WCHLINK_USB_H */

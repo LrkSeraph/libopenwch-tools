@@ -27,6 +27,23 @@ Original work
 All source in `src/`, `tests/`, `udev/` and the build files is original to
 this project.  There is no copied third-party source in this repository.
 
+The CH32V00x erase and program sequence the flasher drives is the one
+libopenwch's own `flash_common_v1.c` implements and the one WCH's EVT driver
+uses, so the flasher and the library agree about the controller by
+construction rather than by two independent readings of the reference manual.
+The sequence is register writes over the debug interface; no target-side helper
+program is uploaded, and therefore no vendor blob is embedded here.
+
+The CH5xx families are erased and programmed by ROM routines reached through an
+interface WCH does not document.  No sequence for them is implemented, and none
+is guessed at.
+
+The simulated programmer in `tests/` -- packet protocol, a subset of the RISC-V
+instruction set, and the flash controller -- is likewise original work, written
+from the same understanding as the code it exercises.  It exists so that a
+whole flashing sequence can be run without a part attached; it can say nothing
+about whether the parts behave as modelled.
+
 Protocol knowledge, not code
 ----------------------------
 

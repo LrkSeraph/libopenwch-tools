@@ -1,9 +1,11 @@
 # Build and test libopenwch-tools.
 #
 # Unlike libopenwch, this repository needs libusb to build, so the dependency
-# is installed here.  The tool's own tests need no hardware: they cover the
-# chip table and the command-line contract, which is everything that can be
-# checked without a WCH-LinkE.
+# is installed here.  The tests need no hardware: besides the chip table and
+# the command-line contract, `flash_test` drives a whole flash sequence through
+# a simulated programmer and a simulated CH32V003 -- protocol framing, debug
+# module, flash controller and all.  Hardware is the one thing CI cannot
+# supply, and it is the one thing left unproven.
 
 name: build
 
@@ -35,6 +37,16 @@ jobs:
 
       - name: Test
         run: make test
+
+      # The protocol, debug-module and flash tests deliberately do not link
+      # libusb: `make -C tests` builds them on a machine that has never seen a
+      # USB stack, which is what keeps the seam between the two real.
+      - name: Tests without libusb
+        run: |
+          make -C tests clean
+          make -C tests build/target_test build/flash_test
+          ./tests/build/target_test
+          ./tests/build/flash_test
 
       # Guards the "-dev package missing" path: the build must also work with
       # libusb supplied by hand, which is how it is built on a machine that

@@ -24,6 +24,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/** How a family's flash controller is driven. */
+enum wl_flash_algo {
+	WL_FLASH_UNSUPPORTED = 0, /**< this tool has no algorithm for it yet */
+	WL_FLASH_CH32V0,	  /**< FLASH controller at 0x40022000 */
+};
+
 /**
  * What the programmer needs to know about a target part.
  *
@@ -31,16 +37,28 @@
  * the project's own device database, rather than from a datasheet typed in by
  * hand -- the two would otherwise drift.
  *
- * There is deliberately no device-ID field yet.  Identifying a part from the
- * ID the programmer reports is milestone M2 work, and inventing IDs here would
- * be worse than having none: the flasher would silently pick the wrong part.
+ * `linke_id` and `interface_speed` are WCH's own protocol constants: the
+ * byte the programmer wants to be told before it will talk to a part, and the
+ * selector for the debug clock it should use for that part.  They are facts
+ * about the programmer, not guesses, and a wrong value here is one of the
+ * ways a flasher damages a target or silently addresses the wrong one.
+ *
+ * The erase and program sizes belong to the algorithm rather than to the part,
+ * so they are zero for a family with no algorithm here yet: the value only
+ * means anything once something uses it.
  */
 typedef struct {
-	const char *name;    /**< base part name, e.g. "ch32v003" */
-	const char *family;  /**< libopenwch family, e.g. "ch32v0" */
-	uint32_t flash_size; /**< bytes of code flash */
-	uint32_t ram_size;   /**< bytes of RAM */
-	uint32_t ram_offset; /**< where RAM starts, e.g. 0x20000000 */
+	const char *name;	 /**< base part name, e.g. "ch32v003" */
+	const char *family;	 /**< libopenwch family, e.g. "ch32v0" */
+	uint32_t flash_size;	 /**< bytes of code flash */
+	uint32_t ram_size;	 /**< bytes of RAM */
+	uint32_t ram_offset;	 /**< where RAM starts, e.g. 0x20000000 */
+	uint8_t linke_id;	 /**< chip type byte for the programmer */
+	uint8_t interface_speed; /**< debug clock selector for this part */
+	uint32_t flash_base;	 /**< where the programmer sees the array */
+	uint32_t erase_size;	 /**< smallest erasable unit, bytes */
+	uint32_t program_size;	 /**< smallest programmable unit, bytes */
+	enum wl_flash_algo algo; /**< which controller sequence to use */
 } wl_chip_t;
 
 /**

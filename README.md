@@ -54,37 +54,63 @@ rather than claiming no programmer is attached.
 ```
 wchlink info                 report the programmer and, with --chip, the target
 wchlink chips                list the parts this tool knows about
-wchlink flash <file.bin>     write a binary image to flash      (milestone 3)
-wchlink read  <file.bin>     read target memory back            (milestone 2)
-wchlink reset                reset the target                   (milestone 3)
-wchlink unbrick              clear all code flash              (milestone 3)
+wchlink flash <file.bin>     write a binary image to flash
+wchlink read  <file.bin>     read target memory into a file
+wchlink reset                reset the target and let it run
+wchlink unbrick              hold the target in reset and power-cycle it
 wchlink terminal             single-wire debug terminal         (milestone 4)
 ```
 
-Options: `--serial`, `--chip`, `--address`, `--size`, `--verify`, `--verbose`,
-`--quiet`, `--version`, `--help`.
+Options: `--serial`, `--chip`, `--address`, `--size`, `--verify`, `--no-verify`,
+`--verbose`, `--quiet`, `--version`, `--help`.
 
 Exit codes: `0` success, `1` USB/programmer/target error, `2` bad command line,
 `3` no usable programmer.
 
-## Supported parts
+```sh
+# write an image and read it back (the default), for a 16K part
+wchlink flash firmware.bin --chip ch32v003
 
-`wchlink chips` prints the table.  The memory figures are taken from
-libopenwch's `ld/devices.data` so the two cannot drift apart.  Neither the
-table nor the flashing path has been checked against hardware; assume the list
-is a plan, not a promise.
+# write it somewhere other than the start of flash
+wchlink flash config.bin --chip ch32v003 --address 0x08003f00
+
+# take a copy of what is in the part
+wchlink read dump.bin --chip ch32v003 --address 0x08000000 --size 1024
+
+# put the part back into reset and let it run
+wchlink reset
+```
+
+## Flashing
+
+`flash` erases, programs and verifies.  It works a page at a time, and a page
+the image only partly covers is read back and merged first, so writing a few
+bytes at an offset leaves the rest of the page alone.
+
+The part is halted for the whole operation and reset when it is done, so the
+image starts running on its own.
+
+**Flashing is implemented for the CH32V00x family only** (CH32V003, 002, 004,
+005, 006, 007).  The other families in the table are refused with an
+explanation rather than written to with a sequence that has not been checked:
+the CH5xx parts put their erase and program routines in ROM and reach them
+through an interface that is not publicly documented, and getting that wrong is
+how a part ends up bricked.
+
+**None of this has been run against a real part yet.**  There is no WCH-LinkE
+here, so what has been verified is the logic: see Tests below.
 
 ## Roadmap
 
 | | |
 |---|---|
 | **M1** | Skeleton, host build, USB discovery, `info`, chip table, CLI — **done** |
-| **M2** | Halt/resume, debug-register access, memory read-back |
-| **M3** | Flash erase/write/verify, `reset`, `unbrick` |
+| **M2** | Halt/resume, debug-register access, memory read-back — **done** |
+| **M3** | Flash erase/write/verify, `reset`, `unbrick` — **done for CH32V00x; needs hardware** |
+| **M3b** | Flash for the CH5xx families |
 | **M4** | Single-wire debug terminal |
 
-A GDB stub is **not** in scope.  Milestones 2 to 4 cannot be written honestly
-without a programmer to test against.
+A GDB stub is **not** in scope.
 
 ## Tests
 
@@ -92,9 +118,21 @@ without a programmer to test against.
 make test
 ```
 
-Covers the chip table and the command-line contract.  Both run with no hardware
-attached.  Anything that touches a real programmer is not covered, because it
-cannot be.
+Three suites, none of which needs hardware:
+
+* `target_test` — the chip table: name matching, order codes, memory figures.
+* `cli_test` — the binary's argument handling and exit codes, as a black box.
+* `flash_test` — a whole flash sequence, driven through a **simulated
+  programmer with a simulated CH32V003 on the other end**.  The simulation
+  answers the same packets a LinkE does, interprets the programs the tool loads
+  into the target's debug program buffer, and implements the flash controller
+  well enough to notice a wrong page address, a program without an erase, a
+  halfword in the wrong order or an unaligned write that clobbers its
+  neighbours.
+
+The third one is the useful one, and it is still not hardware.  What it cannot
+check is the thing only a part can: whether the vendor protocol constants and
+the debug-module behaviour are what this tool believes them to be.
 
 ## Licence
 

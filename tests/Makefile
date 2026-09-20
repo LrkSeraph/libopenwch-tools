@@ -18,7 +18,7 @@ PROJECT		?= ../wchlink
 TOP		= ..
 BUILD_DIR	= build
 
-TESTS		= target_test cli_test
+TESTS		= target_test flash_test cli_test
 
 all: run
 
@@ -26,6 +26,21 @@ $(BUILD_DIR)/target_test: target_test.c $(TOP)/src/target.c $(TOP)/src/target.h
 	@printf "  CC      $<\n"
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -I$(TOP)/src -o $@ target_test.c $(TOP)/src/target.c
+
+## The interesting one: the whole flash sequence, driven through a simulated
+## programmer and a simulated target.  It links the protocol, the debug module
+## and the flash algorithm -- everything except the USB transport -- so a
+## mistake in the sequence fails here instead of on somebody's board.
+FLASH_SRCS	= flash_test.c sim_programmer.c \
+		  $(TOP)/src/linke.c $(TOP)/src/dm.c $(TOP)/src/flash.c \
+		  $(TOP)/src/flash_ch32v0.c $(TOP)/src/target.c \
+		  $(TOP)/src/log.c
+
+$(BUILD_DIR)/flash_test: $(FLASH_SRCS) $(TOP)/src/linke.h $(TOP)/src/dm.h \
+			 $(TOP)/src/flash.h sim_programmer.h
+	@printf "  CC      $<\n"
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -I$(TOP)/src -o $@ $(FLASH_SRCS)
 
 ## The CLI test drives the real binary, so it is a black-box test of argument
 ## handling and exit codes rather than of any particular function.
@@ -35,8 +50,9 @@ $(BUILD_DIR)/cli_test: cli_test.sh
 	@cp cli_test.sh $@
 	@chmod +x $@
 
-run: $(BUILD_DIR)/target_test $(BUILD_DIR)/cli_test
+run: $(BUILD_DIR)/target_test $(BUILD_DIR)/flash_test $(BUILD_DIR)/cli_test
 	@$(BUILD_DIR)/target_test
+	@$(BUILD_DIR)/flash_test
 	@PROJECT=$(PROJECT) $(BUILD_DIR)/cli_test
 
 clean:
