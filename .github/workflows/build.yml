@@ -42,7 +42,7 @@ jobs:
             echo "::error::a tracked file contains an absolute path from a developer's machine"
             fail=1
           fi
-          if git grep -n -I -E 'PRIVATE KEY-----|password[[:space:]]*=|api[_-]?key[[:space:]]*=|ghp_[A-Za-z0-9]{20,}|github_pat_' -- . ; then
+          if git grep -n -I -E 'BEGIN [A-Z ]*PRIVATE KEY|password[[:space:]]*=|api[_-]?key[[:space:]]*=|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}' -- . ; then
             echo "::error::a tracked file looks like it contains a credential"
             fail=1
           fi
