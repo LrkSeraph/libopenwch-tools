@@ -77,6 +77,9 @@ check_exit "$?" "target read32 without an address is a usage error" 2
 "$PROJECT" target write32 0x20000000 >/dev/null 2>&1
 check_exit "$?" "target write32 without a value is a usage error" 2
 
+"$PROJECT" gdbserver >/dev/null 2>&1
+check_exit "$?" "gdbserver without --chip is a usage error" 2
+
 # Live core commands must not auto-detect: that would restart the target and
 # destroy the state they are meant to inspect.  The diagnostic has to say why.
 err=$("$PROJECT" target read32 0x20000000 2>&1 >/dev/null)

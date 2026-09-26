@@ -47,6 +47,7 @@
 #include <time.h>
 
 #include "dm.h"
+#include "gdb_server.h"
 #include "flash.h"
 #include "linke.h"
 #include "log.h"
@@ -73,6 +74,7 @@ struct options {
 	bool address_given;
 	bool size_given;
 	bool verify;
+	uint16_t port;
 };
 
 static void usage(FILE *out) {
@@ -98,6 +100,7 @@ static void usage(FILE *out) {
 	    "<value>\n"
 	    "                       pc/regs/read32/write32 need --chip to "
 	    "preserve state\n"
+	    "  gdbserver            GDB remote server (requires --chip)\n"
 	    "  terminal             SDI/DMDATA debug output terminal\n"
 	    "\n"
 	    "Options:\n"
@@ -105,6 +108,7 @@ static void usage(FILE *out) {
 	    "  -c, --chip <part>    target part; omitted means auto-detect\n"
 	    "  -a, --address <addr> where to write, or what to read from\n"
 	    "  -n, --size <bytes>   number of bytes to read\n"
+	    "  -p, --port <port>    gdbserver TCP port (default 3333)\n"
 	    "      --verify         read the image back and compare (default)\n"
 	    "      --no-verify      skip the read-back\n"
 	    "  -v, --verbose        show what is happening\n"
@@ -1223,6 +1227,7 @@ int main(int argc, char **argv) {
 
 	memset(&opts, 0, sizeof(opts));
 	opts.verify = true;
+	opts.port = 3333u;
 
 	if (argv[0] != NULL && argv[0][0] != '\0') {
 		const char *slash = strrchr(argv[0], '/');
@@ -1306,6 +1311,19 @@ int main(int argc, char **argv) {
 			continue;
 		}
 
+		if (strcmp(arg, "-p") == 0 || strcmp(arg, "--port") == 0) {
+			uint32_t value;
+
+			if (++i >= argc || !parse_u32(argv[i], &value) ||
+			    value == 0u || value > 65535u) {
+				wl_error("%s needs a TCP port", arg);
+				return 2;
+			}
+
+			opts.port = (uint16_t)value;
+			continue;
+		}
+
 		if (arg[0] == '-' && arg[1] != '\0') {
 			wl_error("unknown option '%s'", arg);
 			usage(stderr);
@@ -1381,6 +1399,23 @@ int main(int argc, char **argv) {
 		status = cmd_reset(&opts);
 	} else if (strcmp(command, "unbrick") == 0) {
 		status = cmd_unbrick(&opts);
+	} else if (strcmp(command, "gdbserver") == 0) {
+		if (opts.chip == NULL) {
+			wl_error(
+			    "gdbserver needs --chip to preserve target state");
+			wl_error("auto-detection resets the target; pass "
+				 "--chip <part>, for example --chip ch32v003");
+			status = WL_ERR_USAGE;
+		} else {
+			const wl_chip_t *chip = require_chip(&opts);
+
+			if (chip == NULL) {
+				status = WL_ERR_USAGE;
+			} else {
+				status = wl_gdb_server_run(opts.serial, chip,
+							   opts.port);
+			}
+		}
 	} else if (strcmp(command, "terminal") == 0) {
 		status = cmd_terminal(&opts);
 	} else {

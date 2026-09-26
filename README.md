@@ -70,6 +70,29 @@ wchlink programmer info
 wchlink terminal
 ```
 
+## GDB server
+
+`wchlink gdbserver` exposes a minimal GDB Remote Serial Protocol server for a
+single target:
+
+```sh
+wchlink gdbserver --chip ch32v003
+# another terminal:
+gdb-multiarch firmware.elf
+(gdb) target extended-remote :3333
+(gdb) info registers
+(gdb) continue
+```
+
+`--chip` is mandatory: the initial attach is a reset+halt, and auto-detection
+would do the same restart again.  Once connected, halt/resume and single-step
+use the RISC-V Debug Module's `DMCONTROL` bits, so a running application is not
+restarted when the server continues or stops it again.
+
+The first version supports registers, memory reads/writes, continue, and
+single-step.  Breakpoints and `load` over GDB (`vFlash*`) are not implemented
+yet.
+
 ## Programmer and chip detection
 
 A WCH-LinkE can appear as RISC-V debug (`1a86:8010`), ARM/SWD (`1a86:8012`),

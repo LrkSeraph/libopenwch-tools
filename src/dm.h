@@ -112,6 +112,18 @@ wl_dm_read32(wl_linke_t *link, uint32_t address, uint32_t *value);
 enum wl_status
 wl_dm_read16(wl_linke_t *link, uint32_t address, uint16_t *value);
 
+/** Write one byte. */
+enum wl_status wl_dm_write8(wl_linke_t *link, uint32_t address, uint8_t value);
+
+/** Write the halted core's program counter. */
+enum wl_status wl_dm_pc_write(wl_linke_t *link, uint32_t value);
+
+/** Read the core debug status/control register (0x7b0). */
+enum wl_status wl_dm_dcsr_read(wl_linke_t *link, uint32_t *value);
+
+/** Write the core debug status/control register (0x7b0). */
+enum wl_status wl_dm_dcsr_write(wl_linke_t *link, uint32_t value);
+
 /**
  * Read a run of target memory.
  *

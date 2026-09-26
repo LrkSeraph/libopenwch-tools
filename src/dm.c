@@ -203,6 +203,35 @@ enum wl_status wl_dm_pc_read(wl_linke_t *link, uint32_t *value) {
 	return dm_command(link, command, 0, false, value);
 }
 
+enum wl_status wl_dm_pc_write(wl_linke_t *link, uint32_t value) {
+	uint32_t command = WL_DM_CMD_GPR_BASE | WL_DM_CMD_TRANSFER |
+			   WL_DM_CMD_WRITE | WL_DMI_DPC;
+
+	return dm_command(link, command, value, true, NULL);
+}
+
+static enum wl_status dm_csr_access(wl_linke_t *link,
+				    uint32_t regno,
+				    uint32_t value,
+				    bool write,
+				    uint32_t *result) {
+	uint32_t command = WL_DM_CMD_GPR_BASE | WL_DM_CMD_TRANSFER | regno;
+
+	if (write) {
+		command |= WL_DM_CMD_WRITE;
+	}
+
+	return dm_command(link, command, value, write, result);
+}
+
+enum wl_status wl_dm_dcsr_read(wl_linke_t *link, uint32_t *value) {
+	return dm_csr_access(link, WL_DMI_DCSR, 0, false, value);
+}
+
+enum wl_status wl_dm_dcsr_write(wl_linke_t *link, uint32_t value) {
+	return dm_csr_access(link, WL_DMI_DCSR, value, true, NULL);
+}
+
 static enum wl_status
 dm_load_program(wl_linke_t *link, const uint32_t *program, size_t words) {
 	size_t i;
@@ -390,6 +419,12 @@ wl_dm_write16(wl_linke_t *link, uint32_t address, uint16_t value) {
 	build_programs();
 
 	return wl_dm_run_write(link, write_programs[1], 2, address, value);
+}
+
+enum wl_status wl_dm_write8(wl_linke_t *link, uint32_t address, uint8_t value) {
+	build_programs();
+
+	return wl_dm_run_write(link, write_programs[0], 2, address, value);
 }
 
 static enum wl_status dm_read_sized(wl_linke_t *link,
