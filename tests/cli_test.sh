@@ -77,6 +77,20 @@ check_exit "$?" "target read32 without an address is a usage error" 2
 "$PROJECT" target write32 0x20000000 >/dev/null 2>&1
 check_exit "$?" "target write32 without a value is a usage error" 2
 
+# Live core commands must not auto-detect: that would restart the target and
+# destroy the state they are meant to inspect.  The diagnostic has to say why.
+err=$("$PROJECT" target read32 0x20000000 2>&1 >/dev/null)
+status=$?
+check_exit "$status" "target read32 without --chip is refused" 2
+checks=$((checks + 1))
+case "$err" in
+*"--chip"*) ;;
+*)
+failures=$((failures + 1))
+echo "  FAIL  target read32 error does not mention --chip"
+;;
+esac
+
 "$PROJECT" read >/dev/null 2>&1
 check_exit "$?" "read without a file is a usage error" 2
 

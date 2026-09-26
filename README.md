@@ -52,10 +52,13 @@ wchlink target <sub>         halt | resume | reset | pc | regs | read32 | write3
 wchlink terminal             SDI/DMDATA debug output; Ctrl-C to stop
 ```
 
-`flash` and `read` auto-detect the part when `--chip` is omitted. `target
-halt`, `pc`, `regs`, `read32`, and `write32` leave the core halted; use
-`target resume`. Options: `--serial`, `--chip`, `--address`, `--size`,
-`--verify`, `--no-verify`, `--verbose`, `--quiet`, `--version`, `--help`.
+`flash` and `read` auto-detect the part when `--chip` is omitted.  The live
+core commands `target pc`, `regs`, `read32`, and `write32` require `--chip`:
+auto-detection releases the target and restarts the firmware, which destroys
+the state being inspected.  `target halt`, `resume`, and `reset` do not need
+it.  These debug commands leave the core halted; use `target resume`.
+Options: `--serial`, `--chip`, `--address`, `--size`, `--verify`,
+`--no-verify`, `--verbose`, `--quiet`, `--version`, `--help`.
 Exit codes: `0` success, `1` USB/target error, `2` usage, `3` no programmer.
 
 ```sh

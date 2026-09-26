@@ -96,6 +96,8 @@ static void usage(FILE *out) {
 	    "pc,\n"
 	    "                       regs, read32 <addr>, write32 <addr> "
 	    "<value>\n"
+	    "                       pc/regs/read32/write32 need --chip to "
+	    "preserve state\n"
 	    "  terminal             SDI/DMDATA debug output terminal\n"
 	    "\n"
 	    "Options:\n"
@@ -753,34 +755,33 @@ static enum wl_status cmd_programmer(const struct options *opts) {
 static enum wl_status open_target_debug(const struct options *opts,
 					wl_linke_t *link,
 					const wl_chip_t **chip) {
-	const wl_chip_t *resolved = NULL;
+	const wl_chip_t *resolved;
 	enum wl_status status;
 
-	if (opts->chip != NULL) {
-		resolved = require_chip(opts);
+	/*
+	 * These commands inspect or change live core state.  Auto-detection
+	 * needs to release and re-attach the target, which restarts the core
+	 * and destroys the state the command is meant to observe.  Require
+	 * --chip instead of silently rebooting the application.
+	 */
+	if (opts->chip == NULL) {
+		wl_error("target debug commands need --chip to preserve state");
+		wl_error("auto-detection releases and restarts the target, "
+			 "losing the halted/running context");
+		wl_error("pass --chip <part>, for example --chip ch32v003");
+		return WL_ERR_USAGE;
+	}
 
-		if (resolved == NULL) {
-			return WL_ERR_USAGE;
-		}
+	resolved = require_chip(opts);
+
+	if (resolved == NULL) {
+		return WL_ERR_USAGE;
 	}
 
 	status = wl_linke_open(link, opts->serial);
 
 	if (status != WL_OK) {
 		return status;
-	}
-
-	if (resolved == NULL) {
-		status = wl_linke_identify_chip(link, &resolved);
-
-		if (status != WL_OK) {
-			wl_error("cannot auto-detect the target; connect it, "
-				 "or pass --chip");
-			wl_linke_close(link);
-			return status;
-		}
-
-		wl_info("detected target %s", resolved->name);
 	}
 
 	status = wl_linke_set_interface(link, resolved);
