@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 /*
  * This file is part of the libopenwch-tools project.
  *
@@ -37,10 +39,12 @@
  */
 
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "dm.h"
 #include "flash.h"
@@ -92,7 +96,7 @@ static void usage(FILE *out) {
 	    "pc,\n"
 	    "                       regs, read32 <addr>, write32 <addr> "
 	    "<value>\n"
-	    "  terminal             single-wire debug terminal (milestone 4)\n"
+	    "  terminal             SDI/DMDATA debug output terminal\n"
 	    "\n"
 	    "Options:\n"
 	    "  -s, --serial <sn>    pick a programmer by serial number\n"
@@ -1031,6 +1035,169 @@ static enum wl_status cmd_target(const struct options *opts) {
 	return WL_ERR_USAGE;
 }
 
+/** Set by SIGINT so the terminal loop can detach cleanly. */
+static volatile sig_atomic_t terminal_stop;
+
+static void terminal_signal(int sig) {
+	(void)sig;
+	terminal_stop = 1;
+}
+
+static void terminal_sleep_ms(unsigned ms) {
+	struct timespec req;
+
+	req.tv_sec = (time_t)(ms / 1000u);
+	req.tv_nsec = (long)(ms % 1000u) * 1000000L;
+
+	while (nanosleep(&req, &req) != 0 && errno == EINTR) {
+		/* keep waiting for the remaining interval */
+	}
+}
+
+/**
+ * Poll the debug module's DATA0/DATA1 pair and print whatever the target
+ * writes there.
+ *
+ * This is the WCH SDI printf channel without the LinkE's USB CDC port and
+ * without WCH-LinkUtility's EnableSDIPrintf switch: the host reads the same
+ * debug-module data registers directly.  Two packet shapes are accepted:
+ *
+ *   WCH EVT   low byte = 1..7, that many payload bytes
+ *   ch32fun   low byte bit 7 set, low nibble = payload length + 4
+ */
+static enum wl_status cmd_terminal(const struct options *opts) {
+	wl_linke_t link;
+	const wl_chip_t *chip = NULL;
+	enum wl_status status;
+	bool detected = false;
+
+	if (opts->chip != NULL) {
+		chip = require_chip(opts);
+
+		if (chip == NULL) {
+			return WL_ERR_USAGE;
+		}
+	}
+
+	status = wl_linke_open(&link, opts->serial);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	if (chip == NULL) {
+		status = wl_linke_identify_chip(&link, &chip);
+
+		if (status != WL_OK) {
+			wl_error("cannot auto-detect the target; connect it, "
+				 "or pass --chip");
+			wl_linke_close(&link);
+			return status;
+		}
+
+		detected = true;
+	}
+
+	status = wl_linke_set_interface(&link, chip);
+
+	if (status != WL_OK) {
+		wl_linke_close(&link);
+		return status;
+	}
+
+	if (detected) {
+		/* identify_chip() attaches and halts; let the target run again. */
+		status = wl_linke_resume(&link);
+
+		if (status != WL_OK) {
+			wl_linke_close(&link);
+			return status;
+		}
+	}
+
+	terminal_stop = 0;
+	(void)signal(SIGINT, terminal_signal);
+	(void)signal(SIGTERM, terminal_signal);
+
+	wl_info("terminal = SDI/DMDATA, %s; Ctrl-C to stop", chip->name);
+
+	while (!terminal_stop) {
+		uint32_t data0 = 0;
+		uint32_t data1 = 0;
+		uint8_t low;
+		size_t length = 0;
+		size_t from_data0;
+		char buffer[8];
+		size_t i;
+
+		status = wl_linke_dmi_read(&link, WL_DMI_DATA0, &data0);
+
+		if (status != WL_OK) {
+			break;
+		}
+
+		low = (uint8_t)(data0 & 0xffu);
+
+		if ((low & 0x80u) != 0u) {
+			int n = (int)(low & 0x3fu) - 4;
+
+			if (n >= 1 && n <= 7) {
+				length = (size_t)n;
+			} else {
+				/* A host-to-target acknowledgement/reply. */
+				(void)wl_linke_dmi_write(&link, WL_DMI_DATA0,
+							 0);
+				terminal_sleep_ms(2u);
+				continue;
+			}
+		} else if (low >= 1u && low <= 7u) {
+			length = (size_t)low;
+		} else {
+			terminal_sleep_ms(5u);
+			continue;
+		}
+
+		from_data0 = length > 3u ? 3u : length;
+
+		for (i = 0; i < from_data0; i++) {
+			buffer[i] = (char)((data0 >> (8u * (i + 1u))) & 0xffu);
+		}
+
+		if (length > 3u) {
+			status = wl_linke_dmi_read(&link, WL_DMI_DATA1, &data1);
+
+			if (status != WL_OK) {
+				break;
+			}
+
+			for (i = 3u; i < length; i++) {
+				buffer[i] =
+				    (char)((data1 >> (8u * (i - 3u))) & 0xffu);
+			}
+		}
+
+		if (length > 3u) {
+			(void)wl_linke_dmi_write(&link, WL_DMI_DATA1, 0);
+		}
+
+		(void)wl_linke_dmi_write(&link, WL_DMI_DATA0, 0);
+
+		if (fwrite(buffer, 1u, length, stdout) != length) {
+			break;
+		}
+
+		fflush(stdout);
+	}
+
+	if (terminal_stop) {
+		printf("\n");
+	}
+
+	wl_linke_close(&link);
+
+	return status;
+}
+
 /* --- command line ------------------------------------------------------- */
 
 static int status_to_exit(enum wl_status status) {
@@ -1214,9 +1381,7 @@ int main(int argc, char **argv) {
 	} else if (strcmp(command, "unbrick") == 0) {
 		status = cmd_unbrick(&opts);
 	} else if (strcmp(command, "terminal") == 0) {
-		wl_error("the single-wire terminal is not implemented yet "
-			 "(milestone 4)");
-		status = WL_ERR_NOT_IMPLEMENTED;
+		status = cmd_terminal(&opts);
 	} else {
 		wl_error("unknown command '%s'", command);
 		usage(stderr);
