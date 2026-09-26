@@ -47,6 +47,17 @@ struct wl_usb_link {
 	bool claimed;
 };
 
+/*
+ * Mode-switch commands are a tiny bootloader protocol of their own, separate
+ * from the debug transport: they go out on the bulk data endpoint, after which
+ * the programmer resets its USB device and comes back under a different PID.
+ * The transfer is short, but allow a normal USB timeout rather than the 1 ms
+ * minichlink uses so a busy host does not turn a successful switch into a
+ * spurious I/O error.
+ */
+#define WL_USB_EP_BOOT 0x02u
+#define WL_USB_MODE_SWITCH_TIMEOUT_MS 1000
+
 static libusb_context *context;
 
 const char *wl_usb_mode_name(enum wl_usb_mode mode) {
@@ -316,6 +327,87 @@ void wl_usb_close(wl_usb_link_t *link) {
 	}
 
 	free(link);
+}
+
+/*
+ * Send one bootloader command to an already-enumerated device without claiming
+ * the normal debug interface.  The mode-switch commands are accepted by the
+ * programmer's bootloader before/while it presents as ARM/SWD or IAP, and
+ * claiming the debug interface is not part of that path.  Opening by bus and
+ * address mirrors wl_usb_open(); the device may disappear immediately after
+ * the transfer, which is expected.
+ */
+static int wl_usb_send_boot_command(const wl_usb_info_t *info,
+				    const uint8_t *command,
+				    size_t length) {
+	libusb_device **list = NULL;
+	libusb_device_handle *handle = NULL;
+	ssize_t count;
+	ssize_t i;
+	int transferred = 0;
+	int rc = LIBUSB_ERROR_NO_DEVICE;
+
+	if (info == NULL || command == NULL || length == 0) {
+		return LIBUSB_ERROR_INVALID_PARAM;
+	}
+
+	if (context == NULL) {
+		wl_error("libusb was not initialised; call "
+			 "wl_usb_global_init() first");
+		return LIBUSB_ERROR_OTHER;
+	}
+
+	count = libusb_get_device_list(context, &list);
+
+	if (count < 0) {
+		return (int)count;
+	}
+
+	for (i = 0; i < count; i++) {
+		if (libusb_get_bus_number(list[i]) != info->bus ||
+		    libusb_get_device_address(list[i]) != info->address) {
+			continue;
+		}
+
+		rc = libusb_open(list[i], &handle);
+		break;
+	}
+
+	libusb_free_device_list(list, 1);
+
+	if (rc < 0) {
+		return rc;
+	}
+
+	rc = libusb_bulk_transfer(handle, WL_USB_EP_BOOT,
+				  (unsigned char *)command, (int)length,
+				  &transferred, WL_USB_MODE_SWITCH_TIMEOUT_MS);
+
+	if (rc == 0 && (size_t)transferred != length) {
+		rc = LIBUSB_ERROR_IO;
+	}
+
+	libusb_close(handle);
+
+	return rc;
+}
+
+int wl_usb_switch_arm_to_rv(const wl_usb_info_t *info) {
+	/*
+	 * Protocol fact from minichlink / WCH-LinkE: 0x81, 0xff, 0x01, 0x52 on
+	 * the bulk-out endpoint makes the ARM/SWD firmware reboot into RISC-V
+	 * debug mode and re-enumerate as 1a86:8010.
+	 */
+	static const uint8_t command[] = {0x81u, 0xffu, 0x01u, 0x52u};
+
+	return wl_usb_send_boot_command(info, command, sizeof(command));
+}
+
+int wl_usb_eject_iap(const wl_usb_info_t *info) {
+	/* WCH-LinkE IAP bootloader: 0x83 ejects back to the application. */
+	static const uint8_t command[] = {0x83u};
+
+	return wl_usb_send_boot_command(info, command, sizeof(command));
 }
 
 bool wl_usb_error_is_access(int code) {

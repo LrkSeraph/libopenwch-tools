@@ -81,6 +81,29 @@ const char *wl_usb_strerror(int code);
 bool wl_usb_error_is_access(int code);
 
 /**
+ * Ask a WCH-LinkE in ARM/SWD mode to switch to RISC-V debug mode.
+ *
+ * The command is accepted on the bulk-out endpoint and the programmer then
+ * re-enumerates with WL_USB_PID_LINK_RV.  A zero return only means the command
+ * was accepted; the caller has to wait for the new USB device to appear.
+ *
+ * @param info  the ARM-mode programmer found by wl_usb_scan()
+ * @return 0 on success, or a libusb error code
+ */
+int wl_usb_switch_arm_to_rv(const wl_usb_info_t *info);
+
+/**
+ * Eject a WCH-LinkE that is stuck in its USB ISP/IAP bootloader mode.
+ *
+ * As with wl_usb_switch_arm_to_rv(), the device re-enumerates after the
+ * command and the caller must wait for it to come back.
+ *
+ * @param info  the IAP-mode programmer found by wl_usb_scan()
+ * @return 0 on success, or a libusb error code
+ */
+int wl_usb_eject_iap(const wl_usb_info_t *info);
+
+/**
  * The real transport, over the programmer's bulk endpoints.
  *
  * Its context is a wl_usb_link_t, so a transport outlives nothing: closing the
