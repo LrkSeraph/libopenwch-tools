@@ -362,7 +362,7 @@ write_file(const char *path, const uint8_t *data, size_t length) {
  * At most one line per percent, so that a slow USB link does not spend its
  * time printing, and nothing at all when the user asked for quiet.
  */
-static void show_progress(size_t done, size_t total) {
+static void show_write_progress(size_t done, size_t total) {
 	static int last_percent = -1;
 	int percent;
 
@@ -382,6 +382,31 @@ static void show_progress(size_t done, size_t total) {
 		fprintf(stderr, "\r  written: 100%% (of %zu bytes)\n", total);
 	} else {
 		fprintf(stderr, "\r  writing: %3d%%", percent);
+	}
+
+	fflush(stderr);
+}
+
+static void show_verify_progress(size_t done, size_t total) {
+	static int last_percent = -1;
+	int percent;
+
+	if (wl_log_level() <= WL_LEVEL_QUIET || total == 0) {
+		return;
+	}
+
+	percent = (int)((done * 100u) / total);
+
+	if (percent == last_percent) {
+		return;
+	}
+
+	last_percent = percent;
+
+	if (done >= total) {
+		fprintf(stderr, "\r  verified: 100%% (of %zu bytes)\n", total);
+	} else {
+		fprintf(stderr, "\r  verifying: %3d%%", percent);
 	}
 
 	fflush(stderr);
@@ -485,7 +510,8 @@ static enum wl_status cmd_flash(const struct options *opts) {
 		address, opts->verify ? ", then reading it back" : "");
 
 	status = wl_linke_write_flash(&link, chip, address, image, length,
-				      opts->verify, show_progress);
+				      opts->verify, show_write_progress,
+				      show_verify_progress);
 
 	wl_linke_close(&link);
 	free(image);

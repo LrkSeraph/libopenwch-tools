@@ -504,14 +504,15 @@ bool wl_linke_can_flash(const wl_chip_t *chip) {
 	return chip != NULL && chip->algo != WL_FLASH_UNSUPPORTED;
 }
 
-enum wl_status wl_linke_write_flash(wl_linke_t *link,
-				    const wl_chip_t *chip,
-				    uint32_t address,
-				    const void *image,
-				    size_t length,
-				    bool verify,
-				    void (*progress)(size_t done,
-						     size_t total)) {
+enum wl_status
+wl_linke_write_flash(wl_linke_t *link,
+		     const wl_chip_t *chip,
+		     uint32_t address,
+		     const void *image,
+		     size_t length,
+		     bool verify,
+		     void (*write_progress)(size_t done, size_t total),
+		     void (*verify_progress)(size_t done, size_t total)) {
 	enum wl_status status;
 
 	if (chip == NULL) {
@@ -530,14 +531,16 @@ enum wl_status wl_linke_write_flash(wl_linke_t *link,
 		return status;
 	}
 
-	status = wl_flash_write(link, chip, address, image, length, progress);
+	status =
+	    wl_flash_write(link, chip, address, image, length, write_progress);
 
 	if (status != WL_OK) {
 		return status;
 	}
 
 	if (verify) {
-		status = wl_flash_verify(link, chip, address, image, length);
+		status = wl_flash_verify(link, chip, address, image, length,
+					 verify_progress);
 	}
 
 	/*

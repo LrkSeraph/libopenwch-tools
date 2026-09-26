@@ -65,11 +65,16 @@ enum wl_status wl_flash_write(wl_linke_t *link,
 			      size_t length,
 			      void (*progress)(size_t done, size_t total));
 
-/** Read the image back and compare it with what was written. */
+/**
+ * Read the image back and compare it with what was written.
+ *
+ * @param progress  called with (done, total) after each verified chunk
+ */
 enum wl_status wl_flash_verify(wl_linke_t *link,
 			       const wl_chip_t *chip,
 			       uint32_t address,
 			       const void *image,
-			       size_t length);
+			       size_t length,
+			       void (*progress)(size_t done, size_t total));
 
 #endif /* WCHLINK_FLASH_H */

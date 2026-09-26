@@ -224,16 +224,18 @@ enum wl_status wl_linke_read_memory(wl_linke_t *link,
  * The image is written at @p address, which is an address in the flash
  * mapping the programmer uses (0x08000000 on every part here).
  *
- * @param progress  called with (done, total) bytes, or NULL
+ * @param write_progress   called with (done, total) bytes during the write
+ * @param verify_progress  called with (done, total) bytes during read-back
  */
-enum wl_status wl_linke_write_flash(wl_linke_t *link,
-				    const wl_chip_t *chip,
-				    uint32_t address,
-				    const void *image,
-				    size_t length,
-				    bool verify,
-				    void (*progress)(size_t done,
-						     size_t total));
+enum wl_status
+wl_linke_write_flash(wl_linke_t *link,
+		     const wl_chip_t *chip,
+		     uint32_t address,
+		     const void *image,
+		     size_t length,
+		     bool verify,
+		     void (*write_progress)(size_t done, size_t total),
+		     void (*verify_progress)(size_t done, size_t total));
 
 /** Whether this build can write flash for @p chip. */
 bool wl_linke_can_flash(const wl_chip_t *chip);

@@ -104,7 +104,8 @@ enum wl_status wl_flash_verify(wl_linke_t *link,
 			       const wl_chip_t *chip,
 			       uint32_t address,
 			       const void *image,
-			       size_t length) {
+			       size_t length,
+			       void (*progress)(size_t done, size_t total)) {
 	const uint8_t *expected = (const uint8_t *)image;
 	uint8_t buffer[256];
 	uint32_t start;
@@ -144,6 +145,10 @@ enum wl_status wl_flash_verify(wl_linke_t *link,
 		}
 
 		done += chunk;
+
+		if (progress != NULL) {
+			progress(done, length);
+		}
 	}
 
 	return WL_OK;

@@ -221,7 +221,7 @@ static void test_flash_image(const wl_chip_t *chip) {
 				  wl_sim_context(sim));
 
 	CHECK_EQ(wl_linke_write_flash(&link, chip, chip->flash_base, image,
-				      sizeof(image), true, NULL),
+				      sizeof(image), true, NULL, NULL),
 		 WL_OK);
 
 	flash = wl_sim_flash(sim);
@@ -271,7 +271,7 @@ static void test_partial_page(const wl_chip_t *chip) {
 				  wl_sim_context(sim));
 
 	CHECK_EQ(wl_linke_write_flash(&link, chip, address, image,
-				      sizeof(image), true, NULL),
+				      sizeof(image), true, NULL, NULL),
 		 WL_OK);
 
 	flash = wl_sim_flash(sim);
@@ -324,16 +324,16 @@ static void test_verify_catches_corruption(const wl_chip_t *chip) {
 
 	/* Write without verifying, then damage one byte and verify by hand. */
 	CHECK_EQ(wl_linke_write_flash(&link, chip, chip->flash_base, image,
-				      sizeof(image), false, NULL),
+				      sizeof(image), false, NULL, NULL),
 		 WL_OK);
 	CHECK_EQ(wl_flash_verify(&link, chip, chip->flash_base, image,
-				 sizeof(image)),
+				 sizeof(image), NULL),
 		 WL_OK);
 
 	wl_sim_flash_poke(sim, 17u, (uint8_t)(image[17] ^ 0xf0u));
 
 	CHECK_EQ(wl_flash_verify(&link, chip, chip->flash_base, image,
-				 sizeof(image)),
+				 sizeof(image), NULL),
 		 WL_ERR_VERIFY);
 
 	stderr_on();
@@ -359,7 +359,7 @@ static void test_flash_alias_address(const wl_chip_t *chip) {
 				  wl_sim_context(sim));
 
 	CHECK_EQ(wl_linke_write_flash(&link, chip, 0x00000000u, image,
-				      sizeof(image), true, NULL),
+				      sizeof(image), true, NULL, NULL),
 		 WL_OK);
 
 	CHECK_EQ(memcmp(wl_sim_flash(sim), image, sizeof(image)), 0);
@@ -397,7 +397,7 @@ static void test_unsupported_family(void) {
 	fill_image(image, sizeof(image));
 
 	CHECK_EQ(wl_linke_write_flash(&link, chip, 0x00000000u, image,
-				      sizeof(image), true, NULL),
+				      sizeof(image), true, NULL, NULL),
 		 WL_ERR_NOT_IMPLEMENTED);
 
 	stderr_on();
@@ -427,7 +427,7 @@ static void test_out_of_range(const wl_chip_t *chip) {
 
 	CHECK_EQ(wl_linke_write_flash(&link, chip,
 				      chip->flash_base + chip->flash_size - 16u,
-				      image, sizeof(image), true, NULL),
+				      image, sizeof(image), true, NULL, NULL),
 		 WL_ERR_USAGE);
 
 	CHECK_EQ(wl_sim_erase_count(sim), 0);
