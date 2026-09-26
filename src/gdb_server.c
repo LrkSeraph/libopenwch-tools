@@ -672,8 +672,21 @@ static void gdb_monitor_command(struct gdb_conn *conn, char *command) {
 	}
 
 	if (strcmp(word, "reset") == 0) {
+		struct timespec delay = {0, 10000000L};
+
+		/*
+		 * 0x80000003 asserts ndmreset and haltreq.  As minichlink's own
+		 * sequence shows, ndmreset must then be cleared while haltreq stays
+		 * set, otherwise the core is held in reset and abstract commands
+		 * report "target is not halted".
+		 */
 		(void)wl_linke_dmi_write(conn->link, WL_DMI_DMCONTROL,
 					 0x80000003u);
+		(void)nanosleep(&delay, NULL);
+		(void)wl_linke_dmi_write(conn->link, WL_DMI_DMCONTROL,
+					 0x80000001u);
+		(void)wl_linke_dmi_write(conn->link, WL_DMI_DMCONTROL,
+					 0x80000001u);
 		(void)gdb_dm_wait_halted(conn->link);
 		gdb_send_output(conn, "reset/halt\n");
 		return;
