@@ -89,9 +89,23 @@ would do the same restart again.  Once connected, halt/resume and single-step
 use the RISC-V Debug Module's `DMCONTROL` bits, so a running application is not
 restarted when the server continues or stops it again.
 
-The first version supports registers, memory reads/writes, continue, and
-single-step.  Breakpoints and `load` over GDB (`vFlash*`) are not implemented
-yet.
+Implemented today: registers, memory reads/writes, continue, single-step,
+software breakpoints (`Z0`), and a few `monitor` commands.  Breakpoints in
+flash are inserted by reading, patching, erasing and reprogramming the
+containing page; they are therefore slow and should only be used while the
+target is halted.  Hardware breakpoints and GDB `load` (`vFlash*`) are not
+implemented yet.
+
+Useful monitor commands:
+
+```text
+(gdb) monitor info
+(gdb) monitor regs
+(gdb) monitor read32 0x40021018
+(gdb) monitor write32 0x20000000 0x12345678
+(gdb) monitor reset
+(gdb) monitor halt
+```
 
 ## Programmer and chip detection
 

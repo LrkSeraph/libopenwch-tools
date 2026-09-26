@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "dm.h"
+#include "flash.h"
 #include "gdb_server.h"
 #include "linke.h"
 #include "log.h"
@@ -39,12 +40,21 @@
 #define GDB_DMCONTROL_RESUME 0x40000001u
 #define GDB_DMSTATUS_ANYRUNNING (1u << 10)
 #define GDB_DCSR_STEP (1u << 2)
+#define GDB_MAX_BREAKPOINTS 8u
+
+struct gdb_breakpoint {
+	bool used;
+	uint32_t address;
+	uint32_t kind;
+	uint8_t original[4];
+};
 
 struct gdb_conn {
 	int fd;
 	wl_linke_t *link;
 	const wl_chip_t *chip;
 	bool quit;
+	struct gdb_breakpoint breakpoints[GDB_MAX_BREAKPOINTS];
 };
 
 /* --- low-level I/O ------------------------------------------------------- */
@@ -377,6 +387,398 @@ static enum wl_status gdb_step(wl_linke_t *link) {
 	(void)wl_dm_dcsr_write(link, dcsr & ~GDB_DCSR_STEP);
 
 	return status;
+}
+
+static bool gdb_addr_is_flash(const struct gdb_conn *conn, uint32_t address) {
+	return wl_flash_range_ok(conn->chip, address, 1u);
+}
+
+static uint32_t gdb_normalise_flash(const struct gdb_conn *conn,
+				    uint32_t address) {
+	if (conn->chip->flash_base == 0x08000000u &&
+	    (address & 0xff000000u) == 0u) {
+		return address | 0x08000000u;
+	}
+
+	return address;
+}
+
+static enum wl_status gdb_mem_read(struct gdb_conn *conn,
+				   uint32_t address,
+				   uint8_t *buffer,
+				   size_t length) {
+	return wl_dm_read_block(conn->link, address, buffer, length);
+}
+
+static enum wl_status gdb_mem_patch(struct gdb_conn *conn,
+				    uint32_t address,
+				    const uint8_t *bytes,
+				    size_t length) {
+	if (gdb_addr_is_flash(conn, address)) {
+		uint32_t page_size = conn->chip->erase_size;
+		uint32_t page_start;
+		uint8_t *page;
+		enum wl_status status;
+
+		if (page_size == 0u || page_size > 4096u) {
+			return WL_ERR_USAGE;
+		}
+
+		page = malloc(page_size);
+
+		if (page == NULL) {
+			return WL_ERR_IO;
+		}
+
+		page_start = address & ~(page_size - 1u);
+		status =
+		    wl_dm_read_block(conn->link, page_start, page, page_size);
+
+		if (status == WL_OK) {
+			memcpy(page + (address - page_start), bytes, length);
+			status = wl_flash_write(
+			    conn->link, conn->chip,
+			    gdb_normalise_flash(conn, page_start), page,
+			    page_size, NULL);
+		}
+
+		free(page);
+		return status;
+	}
+
+	if (length == 2u) {
+		return wl_dm_write16(
+		    conn->link, address,
+		    (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8)));
+	}
+
+	if (length == 4u) {
+		uint32_t word = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+				((uint32_t)bytes[2] << 16) |
+				((uint32_t)bytes[3] << 24);
+
+		return wl_dm_write32(conn->link, address, word);
+	}
+
+	return WL_ERR_USAGE;
+}
+
+static bool
+gdb_breakpoint_insert(struct gdb_conn *conn, uint32_t address, uint32_t kind) {
+	struct gdb_breakpoint *bp = NULL;
+	uint8_t replacement[4] = {0x02u, 0x90u, 0x00u, 0x00u};
+	size_t i;
+
+	if ((kind != 2u && kind != 4u) || (address % kind) != 0u) {
+		return false;
+	}
+
+	for (i = 0; i < GDB_MAX_BREAKPOINTS; i++) {
+		if (!conn->breakpoints[i].used) {
+			bp = &conn->breakpoints[i];
+			break;
+		}
+	}
+
+	if (bp == NULL) {
+		return false;
+	}
+
+	if (kind == 4u) {
+		replacement[0] = 0x73u;
+		replacement[1] = 0x00u;
+		replacement[2] = 0x10u;
+		replacement[3] = 0x00u;
+	}
+
+	if (gdb_mem_read(conn, address, bp->original, kind) != WL_OK) {
+		return false;
+	}
+
+	if (gdb_mem_patch(conn, address, replacement, kind) != WL_OK) {
+		return false;
+	}
+
+	bp->used = true;
+	bp->address = address;
+	bp->kind = kind;
+
+	return true;
+}
+
+static bool
+gdb_breakpoint_remove(struct gdb_conn *conn, uint32_t address, uint32_t kind) {
+	size_t i;
+
+	for (i = 0; i < GDB_MAX_BREAKPOINTS; i++) {
+		struct gdb_breakpoint *bp = &conn->breakpoints[i];
+
+		if (bp->used && bp->address == address && bp->kind == kind) {
+			if (gdb_mem_patch(conn, address, bp->original,
+					  bp->kind) != WL_OK) {
+				return false;
+			}
+
+			bp->used = false;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void gdb_breakpoints_clear(struct gdb_conn *conn) {
+	size_t i;
+
+	for (i = 0; i < GDB_MAX_BREAKPOINTS; i++) {
+		struct gdb_breakpoint *bp = &conn->breakpoints[i];
+
+		if (bp->used) {
+			(void)gdb_mem_patch(conn, bp->address, bp->original,
+					    bp->kind);
+			bp->used = false;
+		}
+	}
+}
+
+static void gdb_send_output(struct gdb_conn *conn, const char *text) {
+	size_t length = strlen(text);
+	size_t offset = 0;
+
+	while (offset < length) {
+		char chunk[GDB_PACKET_MAX];
+		size_t count = length - offset;
+		size_t used = 0;
+		size_t i;
+
+		if (count > (GDB_PACKET_MAX - 1u) / 2u) {
+			count = (GDB_PACKET_MAX - 1u) / 2u;
+		}
+
+		chunk[used++] = 'O';
+
+		for (i = 0; i < count; i++) {
+			format_hex_byte(chunk + used,
+					(uint8_t)text[offset + i]);
+			used += 2;
+		}
+
+		gdb_send_packet(conn, chunk, used);
+		offset += count;
+	}
+}
+
+static bool gdb_decode_hex_string(const char *hex, char *out, size_t out_max) {
+	size_t length = strlen(hex);
+	size_t i;
+
+	if ((length & 1u) != 0u || out_max == 0u) {
+		return false;
+	}
+
+	if (length / 2u >= out_max) {
+		return false;
+	}
+
+	for (i = 0; i < length; i += 2) {
+		int high = hex_nibble(hex[i]);
+		int low = hex_nibble(hex[i + 1]);
+
+		if (high < 0 || low < 0) {
+			return false;
+		}
+
+		out[i / 2u] = (char)((high << 4) | low);
+	}
+
+	out[length / 2u] = '\0';
+
+	return true;
+}
+
+static void gdb_monitor_help(struct gdb_conn *conn) {
+	gdb_send_output(conn, "wchlink monitor commands:\n"
+			      "  help                     this text\n"
+			      "  reset                    reset and halt\n"
+			      "  halt                     halt the core\n"
+			      "  resume                   resume the core\n"
+			      "  info                     dmstatus/dcsr/pc\n"
+			      "  regs                     x0-x15 and pc\n"
+			      "  read32 <addr>            read one word\n"
+			      "  write32 <addr> <value>   write one word\n"
+			      "  getcsr <csr>             read a CSR\n"
+			      "  setcsr <csr> <value>     write a CSR\n");
+}
+
+static void gdb_monitor_regs(struct gdb_conn *conn) {
+	char line[64];
+	unsigned reg;
+
+	for (reg = 0; reg < GDB_RV32E_GPRS; reg++) {
+		uint32_t value = 0;
+
+		if (wl_dm_gpr_read(conn->link, reg, &value) != WL_OK) {
+			gdb_send_output(conn, "register read failed\n");
+			return;
+		}
+
+		snprintf(line, sizeof(line), "x%-2u = 0x%08x\n", reg, value);
+		gdb_send_output(conn, line);
+	}
+
+	{
+		uint32_t pc = 0;
+
+		if (wl_dm_pc_read(conn->link, &pc) == WL_OK) {
+			snprintf(line, sizeof(line), "pc  = 0x%08x\n", pc);
+			gdb_send_output(conn, line);
+		}
+	}
+}
+
+static void gdb_monitor_info(struct gdb_conn *conn) {
+	char line[96];
+	uint32_t status = 0;
+	uint32_t dcsr = 0;
+	uint32_t pc = 0;
+
+	if (wl_linke_dmi_read(conn->link, WL_DMI_DMSTATUS, &status) == WL_OK) {
+		snprintf(line, sizeof(line), "dmstatus = 0x%08x\n", status);
+		gdb_send_output(conn, line);
+	}
+
+	if (wl_dm_dcsr_read(conn->link, &dcsr) == WL_OK) {
+		snprintf(line, sizeof(line), "dcsr     = 0x%08x\n", dcsr);
+		gdb_send_output(conn, line);
+	}
+
+	if (wl_dm_pc_read(conn->link, &pc) == WL_OK) {
+		snprintf(line, sizeof(line), "pc       = 0x%08x\n", pc);
+		gdb_send_output(conn, line);
+	}
+}
+
+static void gdb_monitor_command(struct gdb_conn *conn, char *command) {
+	char *save = NULL;
+	char *word;
+	char *arg1;
+	char *arg2;
+
+	word = strtok_r(command, " \t\r\n", &save);
+
+	if (word == NULL || strcmp(word, "help") == 0) {
+		gdb_monitor_help(conn);
+		return;
+	}
+
+	if (strcmp(word, "reset") == 0) {
+		(void)wl_linke_dmi_write(conn->link, WL_DMI_DMCONTROL,
+					 0x80000003u);
+		(void)gdb_dm_wait_halted(conn->link);
+		gdb_send_output(conn, "reset/halt\n");
+		return;
+	}
+
+	if (strcmp(word, "halt") == 0) {
+		(void)gdb_dm_halt(conn->link);
+		(void)gdb_dm_wait_halted(conn->link);
+		gdb_send_output(conn, "halted\n");
+		return;
+	}
+
+	if (strcmp(word, "resume") == 0 || strcmp(word, "continue") == 0) {
+		(void)gdb_resume(conn->link);
+		gdb_send_output(conn, "running\n");
+		return;
+	}
+
+	if (strcmp(word, "info") == 0 || strcmp(word, "status") == 0) {
+		gdb_monitor_info(conn);
+		return;
+	}
+
+	if (strcmp(word, "regs") == 0) {
+		gdb_monitor_regs(conn);
+		return;
+	}
+
+	arg1 = strtok_r(NULL, " \t\r\n", &save);
+
+	if (strcmp(word, "read32") == 0 && arg1 != NULL) {
+		uint32_t address;
+		uint32_t value = 0;
+		char line[64];
+
+		if (parse_hex_u32(arg1, NULL, &address) &&
+		    wl_dm_read32(conn->link, address, &value) == WL_OK) {
+			snprintf(line, sizeof(line), "0x%08x = 0x%08x\n",
+				 address, value);
+			gdb_send_output(conn, line);
+		} else {
+			gdb_send_output(conn, "read32 failed\n");
+		}
+		return;
+	}
+
+	arg2 = strtok_r(NULL, " \t\r\n", &save);
+
+	if (strcmp(word, "write32") == 0 && arg1 != NULL && arg2 != NULL) {
+		uint32_t address;
+		uint32_t value;
+
+		if (parse_hex_u32(arg1, NULL, &address) &&
+		    parse_hex_u32(arg2, NULL, &value) &&
+		    wl_dm_write32(conn->link, address, value) == WL_OK) {
+			gdb_send_output(conn, "OK\n");
+		} else {
+			gdb_send_output(conn, "write32 failed\n");
+		}
+		return;
+	}
+
+	if (strcmp(word, "getcsr") == 0 && arg1 != NULL) {
+		uint32_t csr;
+		uint32_t value = 0;
+		char line[64];
+
+		if (parse_hex_u32(arg1, NULL, &csr) &&
+		    wl_dm_csr_read(conn->link, csr, &value) == WL_OK) {
+			snprintf(line, sizeof(line), "csr 0x%03x = 0x%08x\n",
+				 csr, value);
+			gdb_send_output(conn, line);
+		} else {
+			gdb_send_output(conn, "getcsr failed\n");
+		}
+		return;
+	}
+
+	if (strcmp(word, "setcsr") == 0 && arg1 != NULL && arg2 != NULL) {
+		uint32_t csr;
+		uint32_t value;
+
+		if (parse_hex_u32(arg1, NULL, &csr) &&
+		    parse_hex_u32(arg2, NULL, &value) &&
+		    wl_dm_csr_write(conn->link, csr, value) == WL_OK) {
+			gdb_send_output(conn, "OK\n");
+		} else {
+			gdb_send_output(conn, "setcsr failed\n");
+		}
+		return;
+	}
+
+	gdb_send_output(conn, "unknown monitor command\n");
+}
+
+static void gdb_handle_qRcmd(struct gdb_conn *conn, const char *payload) {
+	char command[256];
+
+	if (!gdb_decode_hex_string(payload + 6, command, sizeof(command))) {
+		gdb_send_text(conn, "E01");
+		return;
+	}
+
+	gdb_monitor_command(conn, command);
+	gdb_send_text(conn, "OK");
 }
 
 static void gdb_send_stop(struct gdb_conn *conn, unsigned signal) {
@@ -781,6 +1183,11 @@ static void gdb_handle_query(struct gdb_conn *conn, const char *payload) {
 		return;
 	}
 
+	if (strncmp(payload, "qRcmd,", 6) == 0) {
+		gdb_handle_qRcmd(conn, payload);
+		return;
+	}
+
 	if (strncmp(payload, "qXfer:", 6) == 0) {
 		gdb_handle_qxfer(conn, payload);
 		return;
@@ -810,24 +1217,57 @@ static bool gdb_handle_packet(struct gdb_conn *conn, const char *payload) {
 	case 'c':
 		if (gdb_resume(conn->link) == WL_OK) {
 			gdb_wait_for_stop(conn);
+		} else {
+			gdb_send_text(conn, "E01");
 		}
 		return true;
 	case 's':
 		if (gdb_step(conn->link) == WL_OK) {
 			gdb_send_stop(conn, 5);
+		} else {
+			gdb_send_text(conn, "E01");
 		}
 		return true;
 	case 'Z':
-	case 'z':
-		/* Breakpoints are not implemented yet. */
-		gdb_send_text(conn, "");
+	case 'z': {
+		bool insert = payload[0] == 'Z';
+		uint32_t address;
+		uint32_t kind;
+		const char *end;
+
+		if (payload[1] != '0' ||
+		    !parse_hex_u32(payload + 3, &end, &address) ||
+		    *end != ',') {
+			gdb_send_text(conn, "");
+			return true;
+		}
+
+		if (!parse_hex_u32(end + 1, NULL, &kind)) {
+			gdb_send_text(conn, "");
+			return true;
+		}
+
+		if (insert) {
+			gdb_send_text(conn,
+				      gdb_breakpoint_insert(conn, address, kind)
+					  ? "OK"
+					  : "");
+		} else {
+			gdb_send_text(conn,
+				      gdb_breakpoint_remove(conn, address, kind)
+					  ? "OK"
+					  : "");
+		}
 		return true;
+	}
 	case 'D':
+		gdb_breakpoints_clear(conn);
 		(void)gdb_resume(conn->link);
 		gdb_send_text(conn, "OK");
 		conn->quit = true;
 		return false;
 	case 'k':
+		gdb_breakpoints_clear(conn);
 		conn->quit = true;
 		return false;
 	case 'H':
@@ -846,10 +1286,14 @@ static bool gdb_handle_packet(struct gdb_conn *conn, const char *payload) {
 			if (payload[6] == 's' || payload[6] == 'S') {
 				if (gdb_step(conn->link) == WL_OK) {
 					gdb_send_stop(conn, 5);
+				} else {
+					gdb_send_text(conn, "E01");
 				}
 			} else {
 				if (gdb_resume(conn->link) == WL_OK) {
 					gdb_wait_for_stop(conn);
+				} else {
+					gdb_send_text(conn, "E01");
 				}
 			}
 			return true;
@@ -972,6 +1416,7 @@ wl_gdb_server_run(const char *serial, const wl_chip_t *chip, uint16_t port) {
 		(void)gdb_handle_packet(&conn, packet);
 	}
 
+	gdb_breakpoints_clear(&conn);
 	close(client_fd);
 	wl_linke_close(&link);
 

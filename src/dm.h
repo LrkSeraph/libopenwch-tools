@@ -124,6 +124,12 @@ enum wl_status wl_dm_dcsr_read(wl_linke_t *link, uint32_t *value);
 /** Write the core debug status/control register (0x7b0). */
 enum wl_status wl_dm_dcsr_write(wl_linke_t *link, uint32_t value);
 
+/** Read an arbitrary CSR through the debug module abstract command. */
+enum wl_status wl_dm_csr_read(wl_linke_t *link, uint32_t csr, uint32_t *value);
+
+/** Write an arbitrary CSR through the debug module abstract command. */
+enum wl_status wl_dm_csr_write(wl_linke_t *link, uint32_t csr, uint32_t value);
+
 /**
  * Read a run of target memory.
  *

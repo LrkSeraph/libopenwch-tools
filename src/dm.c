@@ -232,6 +232,14 @@ enum wl_status wl_dm_dcsr_write(wl_linke_t *link, uint32_t value) {
 	return dm_csr_access(link, WL_DMI_DCSR, value, true, NULL);
 }
 
+enum wl_status wl_dm_csr_read(wl_linke_t *link, uint32_t csr, uint32_t *value) {
+	return dm_csr_access(link, csr, 0, false, value);
+}
+
+enum wl_status wl_dm_csr_write(wl_linke_t *link, uint32_t csr, uint32_t value) {
+	return dm_csr_access(link, csr, value, true, NULL);
+}
+
 static enum wl_status
 dm_load_program(wl_linke_t *link, const uint32_t *program, size_t words) {
 	size_t i;
