@@ -50,12 +50,10 @@
 
 #define WL_VERSION "0.1.0"
 
-static const char *program_name = "wchlink";
+/** Capacity for `programmer list` on a single host. */
+#define WL_MAX_PROGRAMMERS 16
 
-/** What this build can and cannot do.  Printed by --help and info. */
-static const char *const milestone_note =
-    "flashes the CH32V00x family over a WCH-LinkE; not yet verified on "
-    "silicon";
+static const char *program_name = "wchlink";
 
 struct options {
 	const char *serial;
@@ -74,8 +72,8 @@ static void usage(FILE *out) {
 	    "usage: %s <command> [options]\n"
 	    "\n"
 	    "Commands:\n"
-	    "  info                 report the programmer; auto-detect the "
-	    "target unless --chip is given\n"
+	    "  info                 report the target chip; auto-detect it "
+	    "unless --chip is given\n"
 	    "  chips                list the parts this tool knows about\n"
 	    "  flash <file.bin>     write a binary image to flash\n"
 	    "  read  <file.bin>     read memory; no --address/--size dumps "
@@ -83,6 +81,8 @@ static void usage(FILE *out) {
 	    "  reset                reset the target and let it run\n"
 	    "  unbrick              hold the target in reset and power-cycle "
 	    "it\n"
+	    "  programmer <sub>     inspect or control the WCH-LinkE itself\n"
+	    "                       subcommands: info, list, rv, iap\n"
 	    "  terminal             single-wire debug terminal (milestone 4)\n"
 	    "\n"
 	    "Options:\n"
@@ -95,10 +95,8 @@ static void usage(FILE *out) {
 	    "  -v, --verbose        show what is happening\n"
 	    "  -q, --quiet          errors only\n"
 	    "  -h, --help           this text\n"
-	    "      --version        version and milestone\n"
-	    "\n"
-	    "NOTE: %s\n",
-	    program_name, milestone_note);
+	    "      --version        print the tool version\n",
+	    program_name);
 }
 
 static bool parse_u32(const char *text, uint32_t *out) {
@@ -140,6 +138,55 @@ static void print_target_info(const wl_chip_t *chip) {
 	       chip->ram_offset);
 }
 
+/** Print the USB identity and current mode of a discovered programmer. */
+static void print_programmer_info(const wl_usb_info_t *info) {
+	printf("programmer:\n");
+	printf("  usb:    %04x:%04x at bus %u address %u\n", info->vid,
+	       info->pid, info->bus, info->address);
+	printf("  mode:   %s\n", wl_usb_mode_name(info->mode));
+	printf("  serial: %s\n",
+	       info->serial[0] != '\0' ? info->serial : "(not reported)");
+	printf("  product: %s\n",
+	       info->product[0] != '\0' ? info->product : "(not reported)");
+}
+
+/**
+ * Read the programmer firmware version without changing its mode.
+ *
+ * The normal open path insists on RISC-V debug mode; a programmer-info
+ * command should be able to report an ARM-mode or IAP device as it is, so
+ * this opens the USB handle directly and talks the programmer-status command
+ * over its normal transport.
+ */
+static void print_programmer_version(const wl_usb_info_t *info) {
+	wl_usb_link_t *usb = NULL;
+	wl_linke_t link;
+	char version[64];
+	enum wl_status status;
+	int rc;
+
+	memset(version, 0, sizeof(version));
+
+	rc = wl_usb_open(info, &usb);
+
+	if (rc < 0) {
+		printf("  version: (cannot open: %s)\n", wl_usb_strerror(rc));
+		return;
+	}
+
+	wl_linke_attach_transport(&link, wl_usb_transport(), usb);
+
+	status = wl_linke_get_version(&link, version, sizeof(version));
+
+	wl_usb_close(usb);
+
+	if (status == WL_OK) {
+		printf("  version: %s\n", version);
+	} else {
+		printf("  version: %s\n", wl_status_str(status));
+	}
+}
+
 /* --- commands ----------------------------------------------------------- */
 
 static enum wl_status cmd_chips(void) {
@@ -158,13 +205,9 @@ static enum wl_status cmd_chips(void) {
 }
 
 static enum wl_status cmd_info(const struct options *opts) {
+	const wl_chip_t *chip = NULL;
 	wl_linke_t link;
 	enum wl_status status;
-	char version[64];
-	size_t count = 0;
-	const wl_chip_t *chip = NULL;
-
-	(void)wl_chip_all(&count);
 
 	if (opts->chip != NULL) {
 		chip = wl_chip_by_name(opts->chip);
@@ -176,9 +219,8 @@ static enum wl_status cmd_info(const struct options *opts) {
 		}
 
 		print_target_info(chip);
+		return WL_OK;
 	}
-
-	printf("\n");
 
 	status = wl_linke_open(&link, opts->serial);
 
@@ -186,41 +228,16 @@ static enum wl_status cmd_info(const struct options *opts) {
 		return status;
 	}
 
-	if (opts->chip == NULL) {
-		const wl_chip_t *detected = NULL;
+	status = wl_linke_identify_chip(&link, &chip);
 
-		status = wl_linke_identify_chip(&link, &detected);
-
-		if (status == WL_OK) {
-			print_target_info(detected);
-		} else {
-			printf("target: not detected (pass --chip to specify; "
-			       "%zu parts known)\n",
-			       count);
-		}
+	if (status != WL_OK) {
+		wl_error(
+		    "cannot detect the target; connect it, or pass --chip");
+		wl_linke_close(&link);
+		return status;
 	}
 
-	printf("programmer:\n");
-	printf("  usb:    %04x:%04x at bus %u address %u\n", link.info.vid,
-	       link.info.pid, link.info.bus, link.info.address);
-	printf("  mode:   %s\n", wl_usb_mode_name(link.info.mode));
-	printf("  serial: %s\n", link.info.serial[0] != '\0'
-				     ? link.info.serial
-				     : "(not reported)");
-	printf("  product: %s\n", link.info.product[0] != '\0'
-				      ? link.info.product
-				      : "(not reported)");
-
-	memset(version, 0, sizeof(version));
-	status = wl_linke_get_version(&link, version, sizeof(version));
-
-	if (status == WL_OK) {
-		printf("  version: %s\n", version);
-	} else {
-		printf("  version: %s\n", wl_status_str(status));
-	}
-
-	printf("\n%s\n", milestone_note);
+	print_target_info(chip);
 
 	wl_linke_close(&link);
 
@@ -583,6 +600,116 @@ static enum wl_status cmd_unbrick(const struct options *opts) {
 	return status;
 }
 
+static enum wl_status cmd_programmer_info(const struct options *opts) {
+	wl_usb_info_t info;
+	enum wl_status status;
+
+	status = wl_programmer_find(opts->serial, &info);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	print_programmer_info(&info);
+	print_programmer_version(&info);
+
+	return WL_OK;
+}
+
+static enum wl_status cmd_programmer_list(const struct options *opts) {
+	wl_usb_info_t found[WL_MAX_PROGRAMMERS];
+	size_t count = 0;
+	size_t i;
+	int rc;
+
+	(void)opts;
+
+	rc = wl_usb_scan(found, WL_MAX_PROGRAMMERS, &count);
+
+	if (rc < 0) {
+		wl_error("cannot enumerate USB devices: %s",
+			 wl_usb_strerror(rc));
+		return WL_ERR_USB;
+	}
+
+	if (count == 0) {
+		wl_error("no WCH programmer found on the USB bus");
+		return WL_ERR_NO_DEVICE;
+	}
+
+	printf("%zu programmer(s):\n", count);
+
+	for (i = 0; i < count; i++) {
+		printf("\n[%zu] %s\n", i + 1,
+		       found[i].accessible ? "accessible" : "not accessible");
+		print_programmer_info(&found[i]);
+	}
+
+	return WL_OK;
+}
+
+static enum wl_status cmd_programmer_rv(const struct options *opts) {
+	wl_usb_info_t info;
+	enum wl_status status;
+
+	status = wl_programmer_switch_rv(opts->serial, &info);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	wl_info("programmer is in RISC-V debug mode");
+	print_programmer_info(&info);
+
+	return WL_OK;
+}
+
+static enum wl_status cmd_programmer_iap(const struct options *opts) {
+	wl_usb_info_t info;
+	enum wl_status status;
+
+	status = wl_programmer_eject_iap(opts->serial, &info);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	wl_info("programmer is in RISC-V debug mode");
+	print_programmer_info(&info);
+
+	return WL_OK;
+}
+
+/**
+ * Programmer subcommands.  The first non-option argument after `programmer`
+ * is stored in opts->file by the common parser; no other command uses that
+ * slot for a subcommand.
+ */
+static enum wl_status cmd_programmer(const struct options *opts) {
+	const char *sub = opts->file != NULL ? opts->file : "info";
+
+	if (strcmp(sub, "info") == 0) {
+		return cmd_programmer_info(opts);
+	}
+
+	if (strcmp(sub, "list") == 0) {
+		return cmd_programmer_list(opts);
+	}
+
+	if (strcmp(sub, "rv") == 0) {
+		return cmd_programmer_rv(opts);
+	}
+
+	if (strcmp(sub, "iap") == 0) {
+		return cmd_programmer_iap(opts);
+	}
+
+	wl_error("unknown programmer subcommand '%s'", sub);
+	wl_error("expected one of: info, list, rv, iap");
+
+	return WL_ERR_USAGE;
+}
+
 /* --- command line ------------------------------------------------------- */
 
 static int status_to_exit(enum wl_status status) {
@@ -623,8 +750,7 @@ int main(int argc, char **argv) {
 		}
 
 		if (strcmp(arg, "--version") == 0) {
-			printf("%s %s -- %s\n", program_name, WL_VERSION,
-			       milestone_note);
+			printf("%s %s\n", program_name, WL_VERSION);
 			return EXIT_SUCCESS;
 		}
 
@@ -752,6 +878,8 @@ int main(int argc, char **argv) {
 		} else {
 			status = cmd_read(&opts);
 		}
+	} else if (strcmp(command, "programmer") == 0) {
+		status = cmd_programmer(&opts);
 	} else if (strcmp(command, "reset") == 0) {
 		status = cmd_reset(&opts);
 	} else if (strcmp(command, "unbrick") == 0) {

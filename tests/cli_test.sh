@@ -62,6 +62,9 @@ check_exit "$?" "unknown option is a usage error" 2
 "$PROJECT" info --chip nosuchpart >/dev/null 2>&1
 check_exit "$?" "unknown part is a usage error" 2
 
+"$PROJECT" programmer nosuchsub >/dev/null 2>&1
+check_exit "$?" "unknown programmer subcommand is a usage error" 2
+
 "$PROJECT" read >/dev/null 2>&1
 check_exit "$?" "read without a file is a usage error" 2
 
@@ -81,9 +84,9 @@ for part in ch32v003 ch582 ch583; do
 done
 
 # A known part with a full order code must be accepted, not rejected.
+# info --chip now answers from the built-in table without opening USB.
 "$PROJECT" info --chip ch32v003f4p6 >/dev/null 2>&1
-# 0 with a programmer attached, 3 without; either proves it parsed the part.
-check_exit "$?" "info accepts a full order code" 0 3
+check_exit "$?" "info accepts a full order code" 0
 
 # --- missing hardware is a diagnostic, not a crash ----------------------
 
@@ -95,9 +98,9 @@ checks=$((checks + 1))
 if [ "$status" -ge 128 ]; then
 	failures=$((failures + 1))
 	echo "  FAIL  info crashed with signal (exit $status)"
-elif [ "$status" != 0 ] && [ "$status" != 3 ]; then
+elif [ "$status" != 0 ] && [ "$status" != 1 ] && [ "$status" != 3 ]; then
 	failures=$((failures + 1))
-	echo "  FAIL  info exit $status, wanted 0 (found) or 3 (not found)"
+	echo "  FAIL  info exit $status, wanted 0 (detected), 1 (target error) or 3 (no programmer)"
 fi
 
 # The same, and it must say something useful on stderr.

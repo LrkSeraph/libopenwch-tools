@@ -107,6 +107,170 @@ static enum wl_status wait_for_mode(enum wl_usb_mode mode,
 	return WL_ERR_NO_DEVICE;
 }
 
+enum wl_status wl_programmer_find(const char *serial_filter,
+				  wl_usb_info_t *out) {
+	wl_usb_info_t found[WL_MAX_LINKS];
+	size_t count = 0;
+	size_t i;
+	int rc;
+
+	if (out == NULL) {
+		return WL_ERR_USAGE;
+	}
+
+	rc = wl_usb_scan(found, WL_MAX_LINKS, &count);
+
+	if (rc < 0) {
+		wl_error("cannot enumerate USB devices: %s",
+			 wl_usb_strerror(rc));
+		return WL_ERR_USB;
+	}
+
+	if (count == 0) {
+		wl_error("no WCH programmer found on the USB bus");
+		return WL_ERR_NO_DEVICE;
+	}
+
+	for (i = 0; i < count; i++) {
+		if (!found[i].accessible ||
+		    !serial_matches(&found[i], serial_filter)) {
+			continue;
+		}
+
+		*out = found[i];
+		return WL_OK;
+	}
+
+	wl_error("no matching WCH programmer could be opened");
+	return WL_ERR_ACCESS;
+}
+
+enum wl_status wl_programmer_switch_rv(const char *serial_filter,
+				       wl_usb_info_t *out) {
+	wl_usb_info_t found[WL_MAX_LINKS];
+	wl_usb_info_t arm;
+	bool have_arm = false;
+	size_t count = 0;
+	size_t i;
+	int rc;
+
+	if (out == NULL) {
+		return WL_ERR_USAGE;
+	}
+
+	rc = wl_usb_scan(found, WL_MAX_LINKS, &count);
+
+	if (rc < 0) {
+		wl_error("cannot enumerate USB devices: %s",
+			 wl_usb_strerror(rc));
+		return WL_ERR_USB;
+	}
+
+	if (count == 0) {
+		wl_error("no WCH programmer found on the USB bus");
+		return WL_ERR_NO_DEVICE;
+	}
+
+	for (i = 0; i < count; i++) {
+		if (!found[i].accessible ||
+		    !serial_matches(&found[i], serial_filter)) {
+			continue;
+		}
+
+		if (found[i].mode == WL_USB_MODE_RV) {
+			*out = found[i];
+			return WL_OK;
+		}
+
+		if (found[i].mode == WL_USB_MODE_ARM && !have_arm) {
+			arm = found[i];
+			have_arm = true;
+		}
+	}
+
+	if (!have_arm) {
+		wl_error("no accessible WCH-LinkE in ARM/SWD mode");
+		return WL_ERR_ACCESS;
+	}
+
+	wl_info("programmer at bus %u address %u is in ARM/SWD mode; "
+		"switching to RISC-V debug mode",
+		arm.bus, arm.address);
+
+	rc = wl_usb_switch_arm_to_rv(&arm);
+
+	if (rc < 0) {
+		wl_error("cannot switch the programmer to RISC-V mode: %s",
+			 wl_usb_strerror(rc));
+		return wl_usb_error_is_access(rc) ? WL_ERR_ACCESS : WL_ERR_USB;
+	}
+
+	return wait_for_mode(WL_USB_MODE_RV, serial_filter, out);
+}
+
+enum wl_status wl_programmer_eject_iap(const char *serial_filter,
+				       wl_usb_info_t *out) {
+	wl_usb_info_t found[WL_MAX_LINKS];
+	wl_usb_info_t iap;
+	bool have_iap = false;
+	size_t count = 0;
+	size_t i;
+	int rc;
+
+	if (out == NULL) {
+		return WL_ERR_USAGE;
+	}
+
+	rc = wl_usb_scan(found, WL_MAX_LINKS, &count);
+
+	if (rc < 0) {
+		wl_error("cannot enumerate USB devices: %s",
+			 wl_usb_strerror(rc));
+		return WL_ERR_USB;
+	}
+
+	if (count == 0) {
+		wl_error("no WCH programmer found on the USB bus");
+		return WL_ERR_NO_DEVICE;
+	}
+
+	for (i = 0; i < count; i++) {
+		if (!found[i].accessible ||
+		    !serial_matches(&found[i], serial_filter)) {
+			continue;
+		}
+
+		if (found[i].mode == WL_USB_MODE_RV) {
+			*out = found[i];
+			return WL_OK;
+		}
+
+		if (found[i].mode == WL_USB_MODE_IAP && !have_iap) {
+			iap = found[i];
+			have_iap = true;
+		}
+	}
+
+	if (!have_iap) {
+		wl_error("no accessible WCH programmer in IAP mode");
+		return WL_ERR_ACCESS;
+	}
+
+	wl_info("programmer at bus %u address %u is in IAP mode; "
+		"trying to eject it",
+		iap.bus, iap.address);
+
+	rc = wl_usb_eject_iap(&iap);
+
+	if (rc < 0) {
+		wl_error("cannot eject the programmer from IAP mode: %s",
+			 wl_usb_strerror(rc));
+		return wl_usb_error_is_access(rc) ? WL_ERR_ACCESS : WL_ERR_USB;
+	}
+
+	return wait_for_mode(WL_USB_MODE_RV, serial_filter, out);
+}
+
 enum wl_status wl_linke_open(wl_linke_t *link, const char *serial_filter) {
 	wl_usb_info_t found[WL_MAX_LINKS];
 	wl_usb_info_t arm_candidate;

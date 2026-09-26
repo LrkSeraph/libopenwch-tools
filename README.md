@@ -74,13 +74,23 @@ rather than claiming no programmer is attached.
 ## Usage
 
 ```
-wchlink info                 report the programmer and target; --chip optional
+wchlink info                 report the target chip; --chip optional
 wchlink chips                list the parts this tool knows about
 wchlink flash <file.bin>     write a binary image to flash
 wchlink read  <file.bin>     read target memory into a file
 wchlink reset                reset the target and let it run
 wchlink unbrick              hold the target in reset and power-cycle it
+wchlink programmer <sub>     inspect or control the WCH-LinkE itself
 wchlink terminal             single-wire debug terminal         (milestone 4)
+```
+
+`programmer` subcommands:
+
+```
+wchlink programmer info      USB identity, mode, serial, product, firmware
+wchlink programmer list      list every WCH programmer found on the bus
+wchlink programmer rv        switch an ARM/SWD LinkE to RISC-V debug mode
+wchlink programmer iap       eject an IAP-bootloader LinkE
 ```
 
 Options: `--serial`, `--chip`, `--address`, `--size`, `--verify`, `--no-verify`,
@@ -106,17 +116,26 @@ wchlink flash firmware.bin --address 0x08000000
 # no --address/--size: dump the whole code flash
 wchlink read whole.bin
 
+# inspect the programmer itself
+wchlink programmer info
+wchlink programmer list
+
 # put the part back into reset and let it run
 wchlink reset
 ```
 
 ## Chip detection
 
-`--chip` selects the target explicitly and remains the deterministic choice for
-scripts.  When it is omitted, `wchlink` asks the WCH-LinkE for the attached
-part's LinkE family/model pair, resolves it against its own chip table, and
-then applies that part's interface speed and memory geometry.  `info`, `flash`,
-and `read` all support detection.
+`wchlink info` is chip-focused: with `--chip` it answers from the built-in
+table without touching USB, and without `--chip` it asks the WCH-LinkE for the
+attached part's LinkE family/model pair and resolves that against its own chip
+table.  `flash` and `read` also auto-detect when `--chip` is omitted.
+
+`wchlink programmer info` is the programmer-focused command: it reports USB
+identity, current mode, serial, product and firmware version without switching
+the programmer first.  `programmer list` enumerates every WCH programmer
+visible on the bus, including devices that are present but not openable, so a
+missing udev rule is distinguishable from a missing cable.
 
 An unknown model, a target that is not powered, or a target that is not
 connected is an error; the tool never guesses at a part.  `read` is the only

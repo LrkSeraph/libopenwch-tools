@@ -71,6 +71,40 @@ typedef struct {
 	bool configured; /**< whether the interface is set up for chip_id */
 } wl_linke_t;
 
+/* --- programmer-level operations ---------------------------------------- */
+
+/**
+ * Find the first accessible WCH programmer, optionally by serial number.
+ *
+ * The programmer is not opened by this function; callers that need the
+ * protocol use wl_linke_open() or one of the mode-switch helpers below.  It
+ * is intended for `programmer` subcommands, which must be able to report a
+ * device that is present but not usable as a target.
+ */
+enum wl_status wl_programmer_find(const char *serial_filter,
+				  wl_usb_info_t *out);
+
+/**
+ * Ensure the selected programmer is in RISC-V debug mode.
+ *
+ * If it is already there, returns immediately.  If it enumerates as ARM/SWD,
+ * sends the mode-switch command and waits for the RISC-V device to appear.
+ *
+ * @param out  receives the resulting RISC-V programmer information
+ */
+enum wl_status wl_programmer_switch_rv(const char *serial_filter,
+				       wl_usb_info_t *out);
+
+/**
+ * Eject the selected programmer from IAP bootloader mode.
+ *
+ * A programmer already in RISC-V debug mode is left alone and returned in
+ * @p out.  An IAP device is sent the eject command and polled until the
+ * RISC-V debug interface appears.
+ */
+enum wl_status wl_programmer_eject_iap(const char *serial_filter,
+				       wl_usb_info_t *out);
+
 /**
  * Fill @p link with the first usable programmer found, and open it.
  *
