@@ -1,5 +1,7 @@
 # libopenwch-tools
 
+[中文说明](README.zh-CN.md)
+
 Host-side tools for WCH RISC-V microcontrollers. The first is **wchlink**, a
 command-line flasher and debug tool for the **WCH-LinkE**.
 
@@ -8,11 +10,13 @@ This repository is separate from
 target code, this is a host program built with libusb. The template repository
 mounts it as a submodule and delegates `make flash` to it.
 
-> **Status: M1–M4 implemented for CH32V00x; hardware run pending.**
+> **Status: M1–M5 implemented for CH32V00x; hardware validation is partial.**
 > `info`, halt/resume, debug-register access, memory read-back, CH32V00x
-> erase/write/verify, `reset`, `unbrick`, and the SDI/DMDATA terminal are
-> implemented. The flash sequence passes against a simulated programmer and
-> simulated CH32V003; it has not been exercised on real parts.
+> erase/write/verify, `reset`, `unbrick`, the SDI/DMDATA terminal, and a
+> minimal GDB server are implemented.  GDB halt/resume, register and memory
+> access, continue, and software breakpoints (`Z0`) have been exercised on a
+> real CH32V003.  The standalone flash/unbrick/terminal paths still need full
+> hardware validation.
 
 ## Building
 
@@ -84,17 +88,20 @@ gdb-multiarch firmware.elf
 (gdb) continue
 ```
 
-`--chip` is mandatory: the initial attach is a reset+halt, and auto-detection
-would do the same restart again.  Once connected, halt/resume and single-step
-use the RISC-V Debug Module's `DMCONTROL` bits, so a running application is not
-restarted when the server continues or stops it again.
+`--chip` is mandatory: the initial attach halts the target, and auto-detection
+would restart it.  Use `monitor reset` when a known reset state is wanted.
+Once connected, halt/resume and single-step use the RISC-V Debug Module's
+`DMCONTROL` bits, so a running application is not restarted when the server
+continues or stops it again.
 
 Implemented today: registers, memory reads/writes, continue, single-step,
-software breakpoints (`Z0`), and a few `monitor` commands.  Breakpoints in
-flash are inserted by reading, patching, erasing and reprogramming the
-containing page; they are therefore slow and should only be used while the
-target is halted.  Hardware breakpoints and GDB `load` (`vFlash*`) are not
-implemented yet.
+software breakpoints (`Z0`), and a few `monitor` commands.  Software
+breakpoints set `DCSR.ebreakm` so `ebreak` enters debug mode; this path has
+been verified on a real CH32V003, including multiple flash breakpoints and
+continuing past them.  Breakpoints in flash are inserted by reading, patching,
+erasing and reprogramming the containing page; they are therefore slow and
+should only be used while the target is halted.  Hardware breakpoints and GDB
+`load` (`vFlash*`) are not implemented yet.
 
 Useful monitor commands:
 
@@ -151,8 +158,9 @@ constants or debug-module behavior.
 | **M3** | CH32V00x erase/write/verify, `reset`, `unbrick` — done; hardware pending |
 | **M3b** | CH5xx flashing |
 | **M4** | SDI/DMDATA terminal — done; hardware pending |
+| **M5** | GDB server — registers/memory/continue/step, software breakpoints, `monitor` — done; CH32V003 software-breakpoint run verified |
 
-GDB stub is not in scope.
+Hardware breakpoints and GDB `load` (`vFlash*`) are still out of scope.
 
 ## Licence
 
