@@ -855,6 +855,7 @@ static enum wl_status cmd_target_regs(const struct options *opts) {
 	const wl_chip_t *chip = NULL;
 	uint32_t pc = 0;
 	unsigned reg;
+	unsigned gpr_count;
 	enum wl_status status = open_target_debug(opts, &link, &chip);
 
 	if (status != WL_OK) {
@@ -870,7 +871,15 @@ static enum wl_status cmd_target_regs(const struct options *opts) {
 
 	printf("pc  = 0x%08x\n", pc);
 
-	for (reg = 0; reg < 32; reg++) {
+	/*
+	 * RV32E has only x0-x15.  Reading x16 on a CH32V003 makes the
+	 * QingKe debug module report an unsupported-register error, so the
+	 * loop follows the detected family instead of always assuming 32
+	 * registers.
+	 */
+	gpr_count = strcmp(chip->family, "ch32v0") == 0 ? 16u : 32u;
+
+	for (reg = 0; reg < gpr_count; reg++) {
 		uint32_t value = 0;
 
 		status = wl_dm_gpr_read(&link, reg, &value);
