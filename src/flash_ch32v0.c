@@ -31,14 +31,19 @@
 #define FLASH_STATR (FLASH_R_BASE + 0x0cu)
 #define FLASH_CTLR (FLASH_R_BASE + 0x10u)
 #define FLASH_ADDR (FLASH_R_BASE + 0x14u)
+#define FLASH_MODEKEYR (FLASH_R_BASE + 0x24u)
 
 #define FLASH_KEY1 0x45670123u
 #define FLASH_KEY2 0xcdef89abu
 
-#define FLASH_CTLR_PG 0x00000001u      /**< halfword program */
+#define FLASH_CTLR_PG 0x00000001u      /**< normal halfword program */
 #define FLASH_CTLR_STRT 0x00000040u    /**< start the operation */
 #define FLASH_CTLR_LOCK 0x00000080u    /**< controller is locked */
+#define FLASH_CTLR_PAGE_PG 0x00010000u /**< 64-byte page program mode */
 #define FLASH_CTLR_PAGE_ER 0x00020000u /**< 64-byte page erase */
+#define FLASH_CTLR_BUF_LOAD                                                    \
+	0x00040000u /**< load one word into the page buffer */
+#define FLASH_CTLR_BUF_RST 0x00080000u /**< reset the page buffer */
 
 #define FLASH_STATR_BSY 0x00000001u	 /**< an operation is running */
 #define FLASH_STATR_WRPRTERR 0x00000010u /**< write protection refused it */
@@ -89,7 +94,22 @@ static enum wl_status wait_ready(wl_linke_t *link, const char *what) {
 	return WL_OK;
 }
 
-/** Unlock the controller and confirm that it took. */
+/** Read-modify-write the control register. */
+static enum wl_status
+ctlr_update(wl_linke_t *link, uint32_t set, uint32_t clear) {
+	uint32_t ctlr = 0;
+	enum wl_status status = wl_dm_read32(link, FLASH_CTLR, &ctlr);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	ctlr = (ctlr | set) & ~clear;
+
+	return wl_dm_write32(link, FLASH_CTLR, ctlr);
+}
+
+/** Unlock both the normal controller and the fast page path. */
 static enum wl_status unlock(wl_linke_t *link) {
 	enum wl_status status;
 	uint32_t ctlr = 0;
@@ -98,6 +118,14 @@ static enum wl_status unlock(wl_linke_t *link) {
 
 	if (status == WL_OK) {
 		status = wl_dm_write32(link, FLASH_KEYR, FLASH_KEY2);
+	}
+
+	if (status == WL_OK) {
+		status = wl_dm_write32(link, FLASH_MODEKEYR, FLASH_KEY1);
+	}
+
+	if (status == WL_OK) {
+		status = wl_dm_write32(link, FLASH_MODEKEYR, FLASH_KEY2);
 	}
 
 	if (status != WL_OK) {
@@ -123,58 +151,95 @@ static enum wl_status unlock(wl_linke_t *link) {
 	return WL_OK;
 }
 
-/** Erase the 64-byte page at @p page. */
-static enum wl_status erase_page(wl_linke_t *link, uint32_t page) {
+/** Erase the 64-byte fast page at @p page. */
+static enum wl_status erase_page_fast(wl_linke_t *link, uint32_t page) {
 	enum wl_status status;
 
 	status = wait_ready(link, "the previous operation");
 
-	if (status != WL_OK) {
-		return status;
+	if (status == WL_OK) {
+		status = ctlr_update(link, FLASH_CTLR_PAGE_ER, 0);
 	}
-
-	status = wl_dm_write32(link, FLASH_CTLR, FLASH_CTLR_PAGE_ER);
 
 	if (status == WL_OK) {
 		status = wl_dm_write32(link, FLASH_ADDR, page);
 	}
 
 	if (status == WL_OK) {
-		status = wl_dm_write32(link, FLASH_CTLR,
-				       FLASH_CTLR_PAGE_ER | FLASH_CTLR_STRT);
+		status = ctlr_update(link, FLASH_CTLR_STRT, 0);
 	}
 
-	if (status != WL_OK) {
-		return status;
+	if (status == WL_OK) {
+		status = wait_ready(link, "an erase");
 	}
 
-	status = wait_ready(link, "an erase");
-
-	/* Clear the command bit whatever happened, so the next operation does
-	 * not start from a controller still told to erase. */
-	(void)wl_dm_write32(link, FLASH_CTLR, 0);
+	(void)ctlr_update(link, 0, FLASH_CTLR_PAGE_ER | FLASH_CTLR_STRT);
 
 	return status;
 }
 
-/** Program one halfword. */
-static enum wl_status
-program_halfword(wl_linke_t *link, uint32_t address, uint16_t value) {
+/** Reset the 64-byte load buffer. */
+static enum wl_status buffer_reset(wl_linke_t *link) {
 	enum wl_status status;
 
-	status = wl_dm_write32(link, FLASH_CTLR, FLASH_CTLR_PG);
+	status = ctlr_update(link, FLASH_CTLR_PAGE_PG, 0);
 
 	if (status == WL_OK) {
-		status = wl_dm_write16(link, address, value);
+		status = ctlr_update(link, FLASH_CTLR_BUF_RST, 0);
 	}
 
-	if (status != WL_OK) {
-		return status;
+	if (status == WL_OK) {
+		status = wait_ready(link, "the flash buffer reset");
 	}
 
-	status = wait_ready(link, "a program operation");
+	(void)ctlr_update(link, 0, FLASH_CTLR_PAGE_PG | FLASH_CTLR_BUF_RST);
 
-	(void)wl_dm_write32(link, FLASH_CTLR, 0);
+	return status;
+}
+
+/** Load one 32-bit word into the next slot of the page buffer. */
+static enum wl_status
+buffer_load(wl_linke_t *link, uint32_t address, uint32_t word) {
+	enum wl_status status;
+
+	status = ctlr_update(link, FLASH_CTLR_PAGE_PG, 0);
+
+	if (status == WL_OK) {
+		status = wl_dm_write32(link, address, word);
+	}
+
+	if (status == WL_OK) {
+		status = ctlr_update(link, FLASH_CTLR_BUF_LOAD, 0);
+	}
+
+	if (status == WL_OK) {
+		status = wait_ready(link, "the flash buffer load");
+	}
+
+	(void)ctlr_update(link, 0, FLASH_CTLR_PAGE_PG | FLASH_CTLR_BUF_LOAD);
+
+	return status;
+}
+
+/** Program the buffered 64-byte page at @p page. */
+static enum wl_status program_page_fast(wl_linke_t *link, uint32_t page) {
+	enum wl_status status;
+
+	status = ctlr_update(link, FLASH_CTLR_PAGE_PG, 0);
+
+	if (status == WL_OK) {
+		status = wl_dm_write32(link, FLASH_ADDR, page);
+	}
+
+	if (status == WL_OK) {
+		status = ctlr_update(link, FLASH_CTLR_STRT, 0);
+	}
+
+	if (status == WL_OK) {
+		status = wait_ready(link, "a page program");
+	}
+
+	(void)ctlr_update(link, 0, FLASH_CTLR_PAGE_PG | FLASH_CTLR_STRT);
 
 	return status;
 }
@@ -195,7 +260,7 @@ enum wl_status wl_flash_ch32v0_write(wl_linke_t *link,
 	enum wl_status status;
 
 	if (page_size == 0 || (page_size & (page_size - 1u)) != 0 ||
-	    page_size > FLASH_MERGE_MAX) {
+	    (page_size & 3u) != 0 || page_size > FLASH_MERGE_MAX) {
 		wl_error("internal error: bad erase size for %s", chip->name);
 		return WL_ERR_USAGE;
 	}
@@ -237,21 +302,31 @@ enum wl_status wl_flash_ch32v0_write(wl_linke_t *link,
 			}
 		}
 
-		status = erase_page(link, page);
+		status = erase_page_fast(link, page);
 
 		if (status == WL_OK) {
-			for (i = 0; i < page_size; i += 2) {
-				uint16_t halfword =
-				    (uint16_t)(merged[i] |
-					       ((uint16_t)merged[i + 1] << 8));
+			status = buffer_reset(link);
+		}
 
-				status = program_halfword(
-				    link, page + (uint32_t)i, halfword);
+		if (status == WL_OK) {
+			for (i = 0; i < page_size; i += 4) {
+				uint32_t word =
+				    (uint32_t)merged[i] |
+				    ((uint32_t)merged[i + 1] << 8) |
+				    ((uint32_t)merged[i + 2] << 16) |
+				    ((uint32_t)merged[i + 3] << 24);
+
+				status =
+				    buffer_load(link, page + (uint32_t)i, word);
 
 				if (status != WL_OK) {
 					break;
 				}
 			}
+		}
+
+		if (status == WL_OK) {
+			status = program_page_fast(link, page);
 		}
 
 		if (status != WL_OK) {

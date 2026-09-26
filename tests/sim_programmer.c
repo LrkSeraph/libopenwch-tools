@@ -30,6 +30,7 @@
 #define SIM_FLASH_STATR (SIM_FLASH_CTRL + 0x0cu)
 #define SIM_FLASH_CTLR (SIM_FLASH_CTRL + 0x10u)
 #define SIM_FLASH_ADDR (SIM_FLASH_CTRL + 0x14u)
+#define SIM_FLASH_MODEKEYR (SIM_FLASH_CTRL + 0x24u)
 
 #define SIM_KEY1 0x45670123u
 #define SIM_KEY2 0xcdef89abu
@@ -38,7 +39,10 @@
 #define SIM_CTLR_PER 0x00000002u
 #define SIM_CTLR_STRT 0x00000040u
 #define SIM_CTLR_LOCK 0x00000080u
+#define SIM_CTLR_PAGE_PG 0x00010000u
 #define SIM_CTLR_PAGE_ER 0x00020000u
+#define SIM_CTLR_BUF_LOAD 0x00040000u
+#define SIM_CTLR_BUF_RST 0x00080000u
 
 #define SIM_STATR_BSY 0x00000001u
 #define SIM_STATR_WRPRTERR 0x00000010u
@@ -73,10 +77,13 @@ struct wl_sim {
 	uint32_t cmderr;
 
 	/* Flash controller state. */
-	uint32_t key_stage; /**< which of the two unlock keys came last */
+	uint32_t key_stage;	 /**< which normal unlock key came last */
+	uint32_t mode_key_stage; /**< which fast-mode key came last */
 	bool unlocked;
+	bool mode_unlocked;
 	uint32_t ctlr;
 	uint32_t addr;
+	uint8_t page_buf[64];
 	unsigned busy_reads;
 
 	/* Counters the tests assert on. */
@@ -109,6 +116,30 @@ static bool sim_is_ctrl(const struct wl_sim *sim, uint32_t address) {
 	return address >= SIM_FLASH_CTRL && address < SIM_FLASH_CTRL + 0x400u;
 }
 
+static void sim_flash_program_page(struct wl_sim *sim) {
+	size_t offset = sim_flash_offset(sim->addr);
+	size_t i;
+
+	if (!sim->mode_unlocked) {
+		sim->program_errors++;
+		return;
+	}
+
+	for (i = 0; i < 64u && offset + i < sim->flash_size; i++) {
+		uint8_t old = sim->flash[offset + i];
+		uint8_t wanted = sim->page_buf[i];
+
+		if ((old & wanted) != wanted) {
+			sim->program_errors++;
+		}
+
+		sim->flash[offset + i] = (uint8_t)(old & wanted);
+	}
+
+	sim->programs++;
+	sim->busy_reads = SIM_BUSY_READS;
+}
+
 static void
 sim_ctrl_write(struct wl_sim *sim, uint32_t address, uint32_t value) {
 	switch (address) {
@@ -120,10 +151,21 @@ sim_ctrl_write(struct wl_sim *sim, uint32_t address, uint32_t value) {
 			sim->key_stage = 0;
 		} else {
 			/* A wrong key, or the right one out of order,
-			 * leaves the controller locked -- as the real one
-			 * does, which is what makes the tool's read-back of
-			 * the LOCK bit meaningful. */
+ * leaves the controller locked -- as the real one
+ * does, which is what makes the tool's read-back of
+ * the LOCK bit meaningful. */
 			sim->key_stage = 0;
+		}
+		return;
+
+	case SIM_FLASH_MODEKEYR:
+		if (value == SIM_KEY1) {
+			sim->mode_key_stage = 1;
+		} else if (value == SIM_KEY2 && sim->mode_key_stage == 1) {
+			sim->mode_unlocked = true;
+			sim->mode_key_stage = 0;
+		} else {
+			sim->mode_key_stage = 0;
 		}
 		return;
 
@@ -134,6 +176,19 @@ sim_ctrl_write(struct wl_sim *sim, uint32_t address, uint32_t value) {
 	case SIM_FLASH_CTLR:
 		sim->ctlr = value;
 
+		/* Fast buffer reset. */
+		if ((value & SIM_CTLR_BUF_RST) != 0) {
+			if (sim->mode_unlocked) {
+				memset(sim->page_buf, 0xff,
+				       sizeof(sim->page_buf));
+			} else {
+				sim->program_errors++;
+			}
+
+			sim->busy_reads = SIM_BUSY_READS;
+			return;
+		}
+
 		if ((value & SIM_CTLR_STRT) == 0) {
 			return;
 		}
@@ -142,6 +197,11 @@ sim_ctrl_write(struct wl_sim *sim, uint32_t address, uint32_t value) {
 			size_t offset = sim_flash_offset(sim->addr);
 			size_t i;
 
+			if (!sim->mode_unlocked) {
+				sim->program_errors++;
+				return;
+			}
+
 			for (i = 0; i < 64u && offset + i < sim->flash_size;
 			     i++) {
 				sim->flash[offset + i] = 0xffu;
@@ -149,6 +209,8 @@ sim_ctrl_write(struct wl_sim *sim, uint32_t address, uint32_t value) {
 
 			sim->erases++;
 			sim->busy_reads = SIM_BUSY_READS;
+		} else if ((value & SIM_CTLR_PAGE_PG) != 0) {
+			sim_flash_program_page(sim);
 		} else if ((value & SIM_CTLR_PER) != 0) {
 			size_t offset = sim_flash_offset(sim->addr);
 			size_t i;
@@ -162,10 +224,9 @@ sim_ctrl_write(struct wl_sim *sim, uint32_t address, uint32_t value) {
 			sim->busy_reads = SIM_BUSY_READS;
 		} else {
 			/*
-			 * A program is triggered by the store that follows,
-			 * not by STRT; only the fast page program uses STRT
-			 * with PG, and this tool does not use it.
-			 */
+ * A normal halfword program is triggered by the
+ * store that follows, not by STRT.
+ */
 			sim->busy_reads = SIM_BUSY_READS;
 		}
 		return;
@@ -200,6 +261,7 @@ static uint32_t sim_ctrl_read(struct wl_sim *sim, uint32_t address) {
 		return sim->addr;
 
 	case SIM_FLASH_KEYR:
+	case SIM_FLASH_MODEKEYR:
 		return 0;
 
 	default:
@@ -257,10 +319,34 @@ static void sim_access(struct wl_sim *sim,
 		}
 
 		/*
-		 * Programming is only possible with the controller unlocked
-		 * and PG set, and it can only clear bits.  Anything else is
-		 * remembered: the tests assert that the count is zero, which
-		 * is what proves the erase happened before the program.
+		 * Fast page program: writing a word while PAGE_PG is set loads
+		 * it into the 64-byte buffer.  The page is committed later by
+		 * the PAGE_PG|STRT control write, not by this store.
+		 */
+		if (sim->mode_unlocked && (sim->ctlr & SIM_CTLR_PAGE_PG) != 0 &&
+		    size_log2 == 2) {
+			size_t page_off = offset & 0x3fu;
+
+			if (page_off + 4u <= sizeof(sim->page_buf)) {
+				for (i = 0; i < 4u; i++) {
+					sim->page_buf[page_off + i] =
+					    (uint8_t)((*value >> (8u * i)) &
+						      0xffu);
+				}
+
+				sim->busy_reads = SIM_BUSY_READS;
+				return;
+			}
+
+			sim->program_errors++;
+			return;
+		}
+
+		/*
+		 * Normal halfword programming is only possible with the
+		 * controller unlocked and PG set, and it can only clear bits.
+		 * Anything else is remembered: the tests assert that the count
+		 * is zero, which is what proves the erase happened first.
 		 */
 		if (!sim->unlocked || (sim->ctlr & SIM_CTLR_PG) == 0) {
 			sim->program_errors++;
@@ -730,6 +816,7 @@ struct wl_sim *wl_sim_new(const wl_chip_t *chip) {
 
 	/* An unprogrammed part: every byte erased. */
 	memset(sim->flash, 0xff, sim->flash_size);
+	memset(sim->page_buf, 0xff, sizeof(sim->page_buf));
 
 	return sim;
 }
