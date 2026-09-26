@@ -40,6 +40,8 @@
 #define GDB_DMCONTROL_RESUME 0x40000001u
 #define GDB_DMSTATUS_ANYRUNNING (1u << 10)
 #define GDB_DCSR_STEP (1u << 2)
+/* ebreakm/ebreaks/stopcount/stoptime: ensure ebreak enters debug mode. */
+#define GDB_DCSR_EBREAK_BITS 0xb600u
 #define GDB_MAX_BREAKPOINTS 8u
 
 struct gdb_breakpoint {
@@ -357,7 +359,28 @@ static enum wl_status gdb_dm_wait_halted(wl_linke_t *link) {
 	return WL_ERR_TARGET;
 }
 
+/*
+ * Software breakpoints use ebreak.  RISC-V only routes ebreak to the debug
+ * module when DCSR.ebreakm (and possibly ebreaks) is set; after a core reset
+ * those bits are zero, so an unconfigured ebreak is taken as an ordinary
+ * breakpoint exception instead.
+ */
+static enum wl_status gdb_dm_enable_ebreak(wl_linke_t *link) {
+	uint32_t dcsr = 0;
+	enum wl_status status;
+
+	status = wl_dm_dcsr_read(link, &dcsr);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	return wl_dm_dcsr_write(link, dcsr | GDB_DCSR_EBREAK_BITS);
+}
+
 static enum wl_status gdb_resume(wl_linke_t *link) {
+	(void)gdb_dm_enable_ebreak(link);
+
 	return wl_linke_dmi_write(link, WL_DMI_DMCONTROL, GDB_DMCONTROL_RESUME);
 }
 
@@ -371,7 +394,7 @@ static enum wl_status gdb_step(wl_linke_t *link) {
 		return status;
 	}
 
-	dcsr |= GDB_DCSR_STEP;
+	dcsr |= GDB_DCSR_EBREAK_BITS | GDB_DCSR_STEP;
 	status = wl_dm_dcsr_write(link, dcsr);
 
 	if (status != WL_OK) {
@@ -688,6 +711,7 @@ static void gdb_monitor_command(struct gdb_conn *conn, char *command) {
 		(void)wl_linke_dmi_write(conn->link, WL_DMI_DMCONTROL,
 					 0x80000001u);
 		(void)gdb_dm_wait_halted(conn->link);
+		(void)gdb_dm_enable_ebreak(conn->link);
 		gdb_send_output(conn, "reset/halt\n");
 		return;
 	}
@@ -695,6 +719,7 @@ static void gdb_monitor_command(struct gdb_conn *conn, char *command) {
 	if (strcmp(word, "halt") == 0) {
 		(void)gdb_dm_halt(conn->link);
 		(void)gdb_dm_wait_halted(conn->link);
+		(void)gdb_dm_enable_ebreak(conn->link);
 		gdb_send_output(conn, "halted\n");
 		return;
 	}
@@ -1392,6 +1417,7 @@ wl_gdb_server_run(const char *serial, const wl_chip_t *chip, uint16_t port) {
 
 	(void)gdb_dm_halt(&link);
 	(void)gdb_dm_wait_halted(&link);
+	(void)gdb_dm_enable_ebreak(&link);
 
 	listen_fd = gdb_listen(port);
 
