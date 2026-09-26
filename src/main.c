@@ -74,11 +74,12 @@ static void usage(FILE *out) {
 	    "usage: %s <command> [options]\n"
 	    "\n"
 	    "Commands:\n"
-	    "  info                 report the programmer and, with --chip, "
-	    "the target\n"
+	    "  info                 report the programmer; auto-detect the "
+	    "target unless --chip is given\n"
 	    "  chips                list the parts this tool knows about\n"
 	    "  flash <file.bin>     write a binary image to flash\n"
-	    "  read  <file.bin>     read target memory into a file\n"
+	    "  read  <file.bin>     read memory; no --address/--size dumps "
+	    "the whole flash\n"
 	    "  reset                reset the target and let it run\n"
 	    "  unbrick              hold the target in reset and power-cycle "
 	    "it\n"
@@ -86,7 +87,7 @@ static void usage(FILE *out) {
 	    "\n"
 	    "Options:\n"
 	    "  -s, --serial <sn>    pick a programmer by serial number\n"
-	    "  -c, --chip <part>    target part, e.g. ch32v003 or ch582\n"
+	    "  -c, --chip <part>    target part; omitted means auto-detect\n"
 	    "  -a, --address <addr> where to write, or what to read from\n"
 	    "  -n, --size <bytes>   number of bytes to read\n"
 	    "      --verify         read the image back and compare (default)\n"
@@ -130,6 +131,15 @@ static void print_chip(const wl_chip_t *chip, size_t name_width) {
 	       chip->ram_size / 1024u);
 }
 
+/** Print the target block shared by `info` before and after detection. */
+static void print_target_info(const wl_chip_t *chip) {
+	printf("target: %s (%s)\n", chip->name, chip->family);
+	printf("  flash:  %u bytes (%uK)\n", chip->flash_size,
+	       chip->flash_size / 1024u);
+	printf("  ram:    %u bytes at 0x%08x\n", chip->ram_size,
+	       chip->ram_offset);
+}
+
 /* --- commands ----------------------------------------------------------- */
 
 static enum wl_status cmd_chips(void) {
@@ -152,11 +162,12 @@ static enum wl_status cmd_info(const struct options *opts) {
 	enum wl_status status;
 	char version[64];
 	size_t count = 0;
+	const wl_chip_t *chip = NULL;
 
 	(void)wl_chip_all(&count);
 
 	if (opts->chip != NULL) {
-		const wl_chip_t *chip = wl_chip_by_name(opts->chip);
+		chip = wl_chip_by_name(opts->chip);
 
 		if (chip == NULL) {
 			wl_error("unknown part '%s' (try `%s chips`)",
@@ -164,14 +175,7 @@ static enum wl_status cmd_info(const struct options *opts) {
 			return WL_ERR_USAGE;
 		}
 
-		printf("target: %s (%s)\n", chip->name, chip->family);
-		printf("  flash:  %u bytes (%uK)\n", chip->flash_size,
-		       chip->flash_size / 1024u);
-		printf("  ram:    %u bytes at 0x%08x\n", chip->ram_size,
-		       chip->ram_offset);
-	} else {
-		printf("target: not specified (pass --chip; %zu parts known)\n",
-		       count);
+		print_target_info(chip);
 	}
 
 	printf("\n");
@@ -180,6 +184,20 @@ static enum wl_status cmd_info(const struct options *opts) {
 
 	if (status != WL_OK) {
 		return status;
+	}
+
+	if (opts->chip == NULL) {
+		const wl_chip_t *detected = NULL;
+
+		status = wl_linke_identify_chip(&link, &detected);
+
+		if (status == WL_OK) {
+			print_target_info(detected);
+		} else {
+			printf("target: not detected (pass --chip to specify; "
+			       "%zu parts known)\n",
+			       count);
+		}
 	}
 
 	printf("programmer:\n");
@@ -344,24 +362,29 @@ static void show_progress(size_t done, size_t total) {
 }
 
 static enum wl_status cmd_flash(const struct options *opts) {
-	const wl_chip_t *chip = require_chip(opts);
+	const wl_chip_t *chip = NULL;
 	uint8_t *image = NULL;
 	size_t length = 0;
 	uint32_t address;
 	wl_linke_t link;
 	enum wl_status status;
 
-	if (chip == NULL) {
-		return WL_ERR_USAGE;
-	}
+	if (opts->chip != NULL) {
+		chip = require_chip(opts);
 
-	if (!wl_linke_can_flash(chip)) {
-		wl_error("flashing %s is not implemented in this build",
-			 chip->name);
-		wl_error("only the CH32V00x family has a flash sequence here; "
-			 "the other families need one that has been checked "
-			 "against a part");
-		return WL_ERR_NOT_IMPLEMENTED;
+		if (chip == NULL) {
+			return WL_ERR_USAGE;
+		}
+
+		if (!wl_linke_can_flash(chip)) {
+			wl_error("flashing %s is not implemented in this build",
+				 chip->name);
+			wl_error(
+			    "only the CH32V00x family has a flash sequence "
+			    "here; the other families need one that has "
+			    "been checked against a part");
+			return WL_ERR_NOT_IMPLEMENTED;
+		}
 	}
 
 	status = read_file(opts->file, &image, &length);
@@ -370,18 +393,24 @@ static enum wl_status cmd_flash(const struct options *opts) {
 		return status;
 	}
 
-	address = opts->address_given ? opts->address : chip->flash_base;
+	if (chip != NULL) {
+		address =
+		    opts->address_given ? opts->address : chip->flash_base;
 
-	/*
-	 * Check the request against the part before opening anything: an image
-	 * that cannot fit is the command line's problem, and saying so should
-	 * not depend on a programmer being plugged in.
-	 */
-	if (!wl_flash_range_ok(chip, address, length)) {
-		wl_error("0x%08x + %zu bytes does not fit %s's %uK of flash",
-			 address, length, chip->name, chip->flash_size / 1024u);
-		free(image);
-		return WL_ERR_USAGE;
+		/*
+ * Check the request against the part before opening anything:
+ * an image that cannot fit is the command line's problem, and
+ * saying so should not depend on a programmer being plugged
+ * in.
+ */
+		if (!wl_flash_range_ok(chip, address, length)) {
+			wl_error("0x%08x + %zu bytes does not fit %s's %uK of "
+				 "flash",
+				 address, length, chip->name,
+				 chip->flash_size / 1024u);
+			free(image);
+			return WL_ERR_USAGE;
+		}
 	}
 
 	status = wl_linke_open(&link, opts->serial);
@@ -389,6 +418,41 @@ static enum wl_status cmd_flash(const struct options *opts) {
 	if (status != WL_OK) {
 		free(image);
 		return status;
+	}
+
+	if (chip == NULL) {
+		status = wl_linke_identify_chip(&link, &chip);
+
+		if (status != WL_OK) {
+			wl_error("cannot auto-detect the target; connect it, "
+				 "or pass --chip");
+			wl_linke_close(&link);
+			free(image);
+			return status;
+		}
+
+		wl_info("detected target %s", chip->name);
+	}
+
+	if (!wl_linke_can_flash(chip)) {
+		wl_error("flashing %s is not implemented in this build",
+			 chip->name);
+		wl_error("only the CH32V00x family has a flash sequence here; "
+			 "the other families need one that has been checked "
+			 "against a part");
+		wl_linke_close(&link);
+		free(image);
+		return WL_ERR_NOT_IMPLEMENTED;
+	}
+
+	address = opts->address_given ? opts->address : chip->flash_base;
+
+	if (!wl_flash_range_ok(chip, address, length)) {
+		wl_error("0x%08x + %zu bytes does not fit %s's %uK of flash",
+			 address, length, chip->name, chip->flash_size / 1024u);
+		wl_linke_close(&link);
+		free(image);
+		return WL_ERR_USAGE;
 	}
 
 	wl_info("writing %zu bytes to %s at 0x%08x%s", length, chip->name,
@@ -408,44 +472,76 @@ static enum wl_status cmd_flash(const struct options *opts) {
 }
 
 static enum wl_status cmd_read(const struct options *opts) {
-	const wl_chip_t *chip = require_chip(opts);
-	uint32_t address;
+	const wl_chip_t *chip = NULL;
+	bool whole_flash = !opts->address_given && !opts->size_given;
+	uint32_t address = 0;
+	size_t size = 0;
 	uint8_t *buffer;
 	wl_linke_t link;
 	enum wl_status status;
 
-	if (chip == NULL) {
+	/*
+ * Neither option means "dump the whole flash".  One without the other
+ * is ambiguous, so reject it rather than guessing at a range.
+ */
+	if (!whole_flash &&
+	    (!opts->address_given || !opts->size_given || opts->size == 0)) {
+		wl_error("read needs both --address and --size, or neither to "
+			 "read the whole flash");
 		return WL_ERR_USAGE;
 	}
 
-	if (!opts->address_given || !opts->size_given || opts->size == 0) {
-		wl_error("read needs --address and --size");
-		return WL_ERR_USAGE;
-	}
+	if (opts->chip != NULL) {
+		chip = require_chip(opts);
 
-	address = opts->address;
-	buffer = malloc(opts->size);
-
-	if (buffer == NULL) {
-		wl_error("cannot allocate %zu bytes", opts->size);
-		return WL_ERR_USAGE;
+		if (chip == NULL) {
+			return WL_ERR_USAGE;
+		}
 	}
 
 	status = wl_linke_open(&link, opts->serial);
 
 	if (status != WL_OK) {
-		free(buffer);
 		return status;
 	}
 
-	wl_info("reading %zu bytes from 0x%08x", opts->size, address);
+	if (chip == NULL) {
+		status = wl_linke_identify_chip(&link, &chip);
 
-	status = wl_linke_read_memory(&link, chip, address, buffer, opts->size);
+		if (status != WL_OK) {
+			wl_error("cannot auto-detect the target; connect it, "
+				 "or pass --chip");
+			wl_linke_close(&link);
+			return status;
+		}
+
+		wl_info("detected target %s", chip->name);
+	}
+
+	if (whole_flash) {
+		address = chip->flash_base;
+		size = chip->flash_size;
+	} else {
+		address = opts->address;
+		size = opts->size;
+	}
+
+	buffer = malloc(size);
+
+	if (buffer == NULL) {
+		wl_error("cannot allocate %zu bytes", size);
+		wl_linke_close(&link);
+		return WL_ERR_USAGE;
+	}
+
+	wl_info("reading %zu bytes from 0x%08x", size, address);
+
+	status = wl_linke_read_memory(&link, chip, address, buffer, size);
 
 	wl_linke_close(&link);
 
 	if (status == WL_OK) {
-		status = write_file(opts->file, buffer, opts->size);
+		status = write_file(opts->file, buffer, size);
 	}
 
 	free(buffer);

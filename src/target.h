@@ -37,11 +37,12 @@ enum wl_flash_algo {
  * the project's own device database, rather than from a datasheet typed in by
  * hand -- the two would otherwise drift.
  *
- * `linke_id` and `interface_speed` are WCH's own protocol constants: the
- * byte the programmer wants to be told before it will talk to a part, and the
- * selector for the debug clock it should use for that part.  They are facts
- * about the programmer, not guesses, and a wrong value here is one of the
- * ways a flasher damages a target or silently addresses the wrong one.
+ * `linke_id`, `model_id` and `interface_speed` are WCH's own protocol
+ * constants: the family/model pair the programmer reports during detection
+ * and expects to be told before it will talk to a part, and the selector for
+ * the debug clock it should use for that part.  They are facts about the
+ * programmer, not guesses, and a wrong value here is one of the ways a
+ * flasher damages a target or silently addresses the wrong one.
  *
  * The erase and program sizes belong to the algorithm rather than to the part,
  * so they are zero for a family with no algorithm here yet: the value only
@@ -53,7 +54,8 @@ typedef struct {
 	uint32_t flash_size;	 /**< bytes of code flash */
 	uint32_t ram_size;	 /**< bytes of RAM */
 	uint32_t ram_offset;	 /**< where RAM starts, e.g. 0x20000000 */
-	uint8_t linke_id;	 /**< chip type byte for the programmer */
+	uint8_t linke_id;	 /**< family byte for the programmer */
+	uint16_t model_id;	 /**< LinkE model id used for auto-detection */
 	uint8_t interface_speed; /**< debug clock selector for this part */
 	uint32_t flash_base;	 /**< where the programmer sees the array */
 	uint32_t erase_size;	 /**< smallest erasable unit, bytes */
@@ -78,6 +80,17 @@ const wl_chip_t *wl_chip_all(size_t *count);
  * @return the part, or NULL when nothing matches
  */
 const wl_chip_t *wl_chip_by_name(const char *name);
+
+/**
+ * Resolve the family/model pair reported by the WCH-LinkE.
+ *
+ * The programmer answers a chip-detection command with a family byte and a
+ * 16-bit model value; the low four bits of the model value are ignored, as
+ * the vendor tools do.
+ *
+ * @return the matching part, or NULL when the pair is unknown
+ */
+const wl_chip_t *wl_chip_by_detect_id(uint8_t family_id, uint16_t model_id);
 
 /** Length of the longest name in the table, for aligning columns. */
 size_t wl_chip_name_max(void);

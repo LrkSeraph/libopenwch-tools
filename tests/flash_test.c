@@ -128,6 +128,13 @@ static void test_version(wl_linke_t *link) {
 	CHECK(strncmp(version, "WCH-LinkE 2.7", 13) == 0);
 }
 
+static void test_identify(wl_linke_t *link, const wl_chip_t *chip) {
+	const wl_chip_t *detected = NULL;
+
+	CHECK_EQ(wl_linke_identify_chip(link, &detected), WL_OK);
+	CHECK(detected == chip);
+}
+
 static void test_registers(wl_linke_t *link) {
 	uint32_t value = 0;
 
@@ -446,6 +453,7 @@ int main(void) {
 				  wl_sim_context(sim));
 
 	test_version(&link);
+	test_identify(&link, chip);
 	CHECK_EQ(wl_linke_set_interface(&link, chip), WL_OK);
 	test_registers(&link);
 	test_memory_roundtrip(&link, chip);

@@ -36,13 +36,14 @@
  * the LinkE chip id and the debug clock -- are visible as values in the table
  * rather than buried in nineteen columns of positional initialisers.
  *
- *   id   the chip type byte the programmer is told
+ *   id   the family byte used by the LinkE protocol
+ *   mid  the model id returned by chip detection
  *   spd  the debug clock selector for that part
  *   fb   where the programmer sees the code flash
  *   er   erase granularity, pr programmable granularity, algo the sequence
  */
-#define CHIP(nm, fam, fl, rm, ro, id, spd, fb, er, pr, algo)                   \
-	{nm, fam, K(fl), K(rm), ro, id, spd, fb, er, pr, algo}
+#define CHIP(nm, fam, fl, rm, ro, id, mid, spd, fb, er, pr, algo)              \
+	{nm, fam, K(fl), K(rm), ro, id, mid, spd, fb, er, pr, algo}
 
 /* Where RAM starts.  Every part here has it at 0x20000000 except the two
  * CH57x parts that map it above their USB buffer. */
@@ -66,6 +67,7 @@ static const wl_chip_t chips[] = {
 	 2,
 	 RAM_STD,
 	 0x09,
+	 0x0030,
 	 0x01,
 	 FB_V,
 	 64,
@@ -77,6 +79,7 @@ static const wl_chip_t chips[] = {
 	 4,
 	 RAM_STD,
 	 0x4e,
+	 0x0020,
 	 0x01,
 	 FB_V,
 	 64,
@@ -88,6 +91,7 @@ static const wl_chip_t chips[] = {
 	 6,
 	 RAM_STD,
 	 0x4e,
+	 0x0040,
 	 0x01,
 	 FB_V,
 	 64,
@@ -99,6 +103,7 @@ static const wl_chip_t chips[] = {
 	 6,
 	 RAM_STD,
 	 0x4e,
+	 0x0050,
 	 0x01,
 	 FB_V,
 	 64,
@@ -110,6 +115,7 @@ static const wl_chip_t chips[] = {
 	 8,
 	 RAM_STD,
 	 0x4e,
+	 0x0060,
 	 0x01,
 	 FB_V,
 	 64,
@@ -121,6 +127,7 @@ static const wl_chip_t chips[] = {
 	 8,
 	 RAM_STD,
 	 0x4e,
+	 0x0070,
 	 0x01,
 	 FB_V,
 	 64,
@@ -134,6 +141,7 @@ static const wl_chip_t chips[] = {
 	 20,
 	 RAM_STD,
 	 0x01,
+	 0x2500,
 	 0x01,
 	 FB_V,
 	 0,
@@ -145,6 +153,7 @@ static const wl_chip_t chips[] = {
 	 20,
 	 RAM_STD,
 	 0x05,
+	 0x2030,
 	 0x01,
 	 FB_V,
 	 0,
@@ -156,6 +165,7 @@ static const wl_chip_t chips[] = {
 	 20,
 	 RAM_STD,
 	 0x05,
+	 0x2080,
 	 0x01,
 	 FB_V,
 	 0,
@@ -167,6 +177,7 @@ static const wl_chip_t chips[] = {
 	 32,
 	 RAM_STD,
 	 0x06,
+	 0x3030,
 	 0x01,
 	 FB_V,
 	 0,
@@ -178,6 +189,7 @@ static const wl_chip_t chips[] = {
 	 32,
 	 RAM_STD,
 	 0x06,
+	 0x3050,
 	 0x01,
 	 FB_V,
 	 0,
@@ -189,6 +201,7 @@ static const wl_chip_t chips[] = {
 	 32,
 	 RAM_STD,
 	 0x06,
+	 0x3070,
 	 0x01,
 	 FB_V,
 	 0,
@@ -202,6 +215,7 @@ static const wl_chip_t chips[] = {
 	 20,
 	 RAM_STD,
 	 0x0d,
+	 0x0330,
 	 0x01,
 	 FB_V,
 	 0,
@@ -213,6 +227,7 @@ static const wl_chip_t chips[] = {
 	 20,
 	 RAM_STD,
 	 0x0d,
+	 0x0350,
 	 0x01,
 	 FB_V,
 	 0,
@@ -224,6 +239,7 @@ static const wl_chip_t chips[] = {
 	 20,
 	 RAM_STD,
 	 0x0e,
+	 0x1030,
 	 0x01,
 	 FB_V,
 	 0,
@@ -237,6 +253,7 @@ static const wl_chip_t chips[] = {
 	 12,
 	 RAM_STD,
 	 0x8b,
+	 0x7000,
 	 0x03,
 	 FB_C,
 	 0,
@@ -248,6 +265,7 @@ static const wl_chip_t chips[] = {
 	 12,
 	 RAM_STD,
 	 0x8b,
+	 0x7200,
 	 0x03,
 	 FB_C,
 	 0,
@@ -259,6 +277,7 @@ static const wl_chip_t chips[] = {
 	 18,
 	 RAM_CH571,
 	 0x02,
+	 0x7100,
 	 0x02,
 	 FB_C,
 	 0,
@@ -270,6 +289,7 @@ static const wl_chip_t chips[] = {
 	 18,
 	 RAM_CH571,
 	 0x02,
+	 0x7300,
 	 0x02,
 	 FB_C,
 	 0,
@@ -283,6 +303,7 @@ static const wl_chip_t chips[] = {
 	 32,
 	 RAM_STD,
 	 0x07,
+	 0x8200,
 	 0x03,
 	 FB_C,
 	 0,
@@ -294,6 +315,7 @@ static const wl_chip_t chips[] = {
 	 32,
 	 RAM_STD,
 	 0x07,
+	 0x8300,
 	 0x03,
 	 FB_C,
 	 0,
@@ -305,6 +327,7 @@ static const wl_chip_t chips[] = {
 	 96,
 	 RAM_STD,
 	 0x4b,
+	 0x8400,
 	 0x02,
 	 FB_C,
 	 0,
@@ -316,6 +339,7 @@ static const wl_chip_t chips[] = {
 	 128,
 	 RAM_STD,
 	 0x4b,
+	 0x9300,
 	 0x02,
 	 FB_C,
 	 0,
@@ -329,6 +353,7 @@ static const wl_chip_t chips[] = {
 	 26,
 	 RAM_STD,
 	 0x0b,
+	 0x9100,
 	 0x03,
 	 FB_C,
 	 0,
@@ -340,6 +365,7 @@ static const wl_chip_t chips[] = {
 	 26,
 	 RAM_STD,
 	 0x0b,
+	 0x9200,
 	 0x03,
 	 FB_C,
 	 0,
@@ -355,6 +381,22 @@ const wl_chip_t *wl_chip_all(size_t *count) {
 	}
 
 	return chips;
+}
+
+const wl_chip_t *wl_chip_by_detect_id(uint8_t family_id, uint16_t model_id) {
+	size_t i;
+
+	/* The vendor tools ignore the low nibble of the model id. */
+	model_id &= 0xfff0u;
+
+	for (i = 0; i < chip_count; i++) {
+		if (chips[i].linke_id == family_id &&
+		    chips[i].model_id == model_id) {
+			return &chips[i];
+		}
+	}
+
+	return NULL;
 }
 
 static bool name_matches(const char *candidate, const char *query) {

@@ -148,6 +148,23 @@ static void test_same(void) {
 	      "an unknown part is never the same as a known one");
 }
 
+static void test_detect_lookup(void) {
+	check(wl_chip_by_detect_id(0x09u, 0x0030u) ==
+		  wl_chip_by_name("ch32v003"),
+	      "family/model detects ch32v003");
+	check(wl_chip_by_detect_id(0x4eu, 0x0075u) ==
+		  wl_chip_by_name("ch32v007"),
+	      "the low nibble of the model id is ignored");
+	check(wl_chip_by_detect_id(0x07u, 0x8200u) == wl_chip_by_name("ch582"),
+	      "family/model detects ch582");
+	check(wl_chip_by_detect_id(0x4bu, 0x9300u) == wl_chip_by_name("ch585"),
+	      "family/model detects ch585");
+	check(wl_chip_by_detect_id(0x4eu, 0x9990u) == NULL,
+	      "an unknown model matches nothing");
+	check(wl_chip_by_detect_id(0x99u, 0x0030u) == NULL,
+	      "an unknown family matches nothing");
+}
+
 static void test_name_max(void) {
 	size_t max = wl_chip_name_max();
 	size_t count = 0;
@@ -170,6 +187,7 @@ int main(void) {
 	test_longest_match_wins();
 	test_unknown();
 	test_same();
+	test_detect_lookup();
 	test_name_max();
 
 	printf("  %d checks, %d failure(s)\n", checks, failures);

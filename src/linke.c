@@ -281,10 +281,108 @@ wl_linke_get_version(wl_linke_t *link, char *out, size_t out_len) {
 	return WL_OK;
 }
 
-enum wl_status wl_linke_set_interface(wl_linke_t *link, const wl_chip_t *chip) {
+/**
+ * Send the raw "select target family and debug clock" command.
+ *
+ * Used both for the generic speed set before chip detection and for the
+ * final, part-specific setting.  The caller owns the configured/chip_id
+ * state; this function only speaks the protocol and checks the reply.
+ */
+static enum wl_status set_interface_raw(wl_linke_t *link,
+					uint8_t family_id,
+					uint8_t interface_speed) {
 	uint8_t request[5];
 	uint8_t reply[WL_REPLY_MAX];
 	size_t length = 0;
+	enum wl_status status;
+
+	request[0] = 0x81;
+	request[1] = WL_CMD_IFACE;
+	request[2] = 0x02;
+	request[3] = family_id;
+	request[4] = interface_speed;
+
+	status = wl_linke_command(link, request, sizeof(request), reply,
+				  sizeof(reply), &length);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	if (!reply_ok(reply, length)) {
+		wl_error("the programmer refused interface setting "
+			 "(family 0x%02x, speed 0x%02x)",
+			 family_id, interface_speed);
+		return WL_ERR_TARGET;
+	}
+
+	return WL_OK;
+}
+
+enum wl_status wl_linke_identify_chip(wl_linke_t *link,
+				      const wl_chip_t **chip) {
+	uint8_t reply[WL_REPLY_MAX];
+	size_t length = 0;
+	enum wl_status status;
+	const wl_chip_t *found;
+	uint8_t family_id;
+	uint16_t model_id;
+
+	if (chip == NULL) {
+		return WL_ERR_USAGE;
+	}
+
+	*chip = NULL;
+
+	/*
+	 * The programmer needs an interface clock before it will sample a
+	 * target.  Use the default minichlink uses: generic family 0x01,
+	 * 4 MHz.  The detected part's real value is applied afterwards by
+	 * wl_linke_set_interface().
+	 */
+	status = set_interface_raw(link, 0x01, 0x02);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	link->configured = false;
+
+	status = send_control(link, WL_CMD_CONTROL, WL_CTL_ATTACH, reply,
+			      sizeof(reply), &length);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	if (length < 6 || reply[0] != WL_REPLY_HEADER ||
+	    reply[1] != WL_CMD_CONTROL) {
+		wl_debug("the programmer did not return a chip id "
+			 "(%zu byte reply)",
+			 length);
+		return WL_ERR_TARGET;
+	}
+
+	family_id = reply[3];
+	model_id = (uint16_t)(((uint16_t)reply[4] << 8) | reply[5]);
+
+	found = wl_chip_by_detect_id(family_id, model_id);
+
+	if (found == NULL) {
+		wl_debug("unknown target: LinkE family 0x%02x, model 0x%04x",
+			 family_id, model_id);
+		return WL_ERR_TARGET;
+	}
+
+	wl_debug("detected target %s (family 0x%02x, model 0x%04x)",
+		 found->name, family_id, model_id);
+
+	*chip = found;
+
+	return WL_OK;
+}
+
+enum wl_status wl_linke_set_interface(wl_linke_t *link, const wl_chip_t *chip) {
 	enum wl_status status;
 
 	if (chip == NULL) {
@@ -295,23 +393,10 @@ enum wl_status wl_linke_set_interface(wl_linke_t *link, const wl_chip_t *chip) {
 		return WL_OK;
 	}
 
-	request[0] = 0x81;
-	request[1] = WL_CMD_IFACE;
-	request[2] = 0x02;
-	request[3] = chip->linke_id;
-	request[4] = chip->interface_speed;
-
-	status = wl_linke_command(link, request, sizeof(request), reply,
-				  sizeof(reply), &length);
+	status = set_interface_raw(link, chip->linke_id, chip->interface_speed);
 
 	if (status != WL_OK) {
 		return status;
-	}
-
-	if (!reply_ok(reply, length)) {
-		wl_error("the programmer refused to talk to %s (id 0x%02x)",
-			 chip->name, chip->linke_id);
-		return WL_ERR_TARGET;
 	}
 
 	link->chip_id = chip->linke_id;

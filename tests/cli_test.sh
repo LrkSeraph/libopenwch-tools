@@ -135,9 +135,13 @@ check_exit "$?" "flash refuses a family with no algorithm" 1
 "$PROJECT" flash "$big" --chip ch32v003 >/dev/null 2>&1
 check_exit "$?" "flash refuses an image that does not fit" 2
 
-# Without --chip there is nothing to select an algorithm with.
-"$PROJECT" flash "$tmp" >/dev/null 2>&1
-check_exit "$?" "flash without --chip is a usage error" 2
+# read defaults to the whole flash only when both range options are absent;
+# one without the other is ambiguous and must be rejected before USB is touched.
+"$PROJECT" read "$tmp" --address 0x08000000 >/dev/null 2>&1
+check_exit "$?" "read with an address but no size is a usage error" 2
+
+"$PROJECT" read "$tmp" --size 16 >/dev/null 2>&1
+check_exit "$?" "read with a size but no address is a usage error" 2
 
 rm -f "$tmp" "$big"
 

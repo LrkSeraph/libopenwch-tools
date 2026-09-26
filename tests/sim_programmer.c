@@ -556,10 +556,23 @@ static int sim_command(void *ctx,
 			reply[5] = 18; /* WCH-LinkE */
 			reply[6] = 0x00;
 			length = 7;
+		} else if (sub == 0x02u) { /* attach and report family/model */
+			uint16_t model =
+			    sim->chip != NULL ? sim->chip->model_id : 0u;
+
+			sim->attached = true;
+
+			reply[0] = 0x82;
+			reply[1] = 0x0d;
+			reply[2] = 0x05;
+			reply[3] = sim->chip != NULL ? sim->chip->linke_id : 0u;
+			reply[4] = (uint8_t)(model >> 8);
+			reply[5] = (uint8_t)model;
+			reply[6] = 0x05;
+			reply[7] = 0x00;
+			length = 8;
 		} else {
-			if (sub == 0x02u) {
-				sim->attached = true;
-			} else if (sub == 0xffu) {
+			if (sub == 0xffu) {
 				sim->attached = false;
 			}
 

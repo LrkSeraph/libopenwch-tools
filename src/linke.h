@@ -118,6 +118,21 @@ enum wl_status
 wl_linke_get_version(wl_linke_t *link, char *out, size_t out_len);
 
 /**
+ * Identify the part attached to the programmer.
+ *
+ * The WCH-LinkE answers its attach command with a family byte and a 16-bit
+ * model value.  This function matches that pair against the chip table and
+ * stores the result in @p chip.  It also leaves the target held in reset,
+ * exactly as wl_linke_halt() does, so callers that immediately configure the
+ * interface can do so without a second attach.
+ *
+ * @param chip  receives the matching part on success
+ * @return WL_OK, WL_ERR_TARGET when no target answers or the pair is unknown,
+ *         or another wl_status on transport failure
+ */
+enum wl_status wl_linke_identify_chip(wl_linke_t *link, const wl_chip_t **chip);
+
+/**
  * Tell the programmer which part it is talking to, and at what clock.
  *
  * This must happen before any target access: it selects the debug transport

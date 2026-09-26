@@ -74,7 +74,7 @@ rather than claiming no programmer is attached.
 ## Usage
 
 ```
-wchlink info                 report the programmer and, with --chip, the target
+wchlink info                 report the programmer and target; --chip optional
 wchlink chips                list the parts this tool knows about
 wchlink flash <file.bin>     write a binary image to flash
 wchlink read  <file.bin>     read target memory into a file
@@ -99,9 +99,29 @@ wchlink flash config.bin --chip ch32v003 --address 0x08003f00
 # take a copy of what is in the part
 wchlink read dump.bin --chip ch32v003 --address 0x08000000 --size 1024
 
+# no --chip: identify the attached part automatically
+wchlink info
+wchlink flash firmware.bin --address 0x08000000
+
+# no --address/--size: dump the whole code flash
+wchlink read whole.bin
+
 # put the part back into reset and let it run
 wchlink reset
 ```
+
+## Chip detection
+
+`--chip` selects the target explicitly and remains the deterministic choice for
+scripts.  When it is omitted, `wchlink` asks the WCH-LinkE for the attached
+part's LinkE family/model pair, resolves it against its own chip table, and
+then applies that part's interface speed and memory geometry.  `info`, `flash`,
+and `read` all support detection.
+
+An unknown model, a target that is not powered, or a target that is not
+connected is an error; the tool never guesses at a part.  `read` is the only
+command whose default changes when `--chip` is omitted: without
+`--address`/`--size` it dumps the detected part's entire code flash.
 
 ## Flashing
 
