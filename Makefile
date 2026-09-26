@@ -75,6 +75,8 @@ install-udev-rules:
 	$(Q)udevadm control --reload-rules
 	$(Q)udevadm trigger
 	@printf "  UDEV    installed; replug the programmer\n"
+	@printf "  NOTE    if TAG+=uaccess is not available, add yourself to plugdev\n"
+	@printf "          and start a new login session; do not run wchlink with sudo\n"
 
 clean:
 	$(Q)$(RM) -r $(BUILD_DIR)

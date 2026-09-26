@@ -7,18 +7,24 @@
 #
 # or copy this file to /etc/udev/rules.d/ and replug the programmer.
 #
-# GROUP="plugdev" is the Debian/Ubuntu convention.  On a distribution without
-# it, change the group to one you are in (often "uucp" or your own user's
-# group), or use TAG+="uaccess" on a systemd distribution where that is
-# supported.
+# Two ways to grant an unprivileged user access are combined here:
+#
+#   * GROUP="plugdev", the Debian/Ubuntu convention.  On a distribution
+#     without that group, change it to one you are in (often "uucp" or your
+#     own user's group);
+#   * TAG+="uaccess", which systemd-logind turns into an ACL for the local
+#     session user and is the most convenient on a desktop.
+#
+# Install the file, reload udev, and replug the programmer.  No part of
+# wchlink itself needs root.
 
 # WCH-LinkE in RISC-V debug mode -- the mode that flashes WCH RISC-V parts.
-SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="8010", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="8010", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
 # WCH-LinkE in ARM/SWD mode.  Listed so the tool can report the programmer and
 # tell the user to switch it, rather than pretending nothing is attached.
-SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="8012", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="8012", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
 # The USB ISP bootloader, which some parts present instead of a probe.
-SUBSYSTEM=="usb", ATTRS{idVendor}=="4348", ATTRS{idProduct}=="55e0", MODE="0660", GROUP="plugdev"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55e0", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="4348", ATTRS{idProduct}=="55e0", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55e0", MODE="0660", GROUP="plugdev", TAG+="uaccess"

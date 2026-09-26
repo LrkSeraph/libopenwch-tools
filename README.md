@@ -60,16 +60,27 @@ but cannot be opened is never silently reported as "not found".
 
 ## Permissions
 
-On Linux the programmer is only reachable by an unprivileged user with udev
-rules installed:
+On Linux the USB device nodes are normally root-owned, so `wchlink` running as
+an ordinary user cannot open the programmer until a udev rule grants access.
+The tool itself needs no privileges.
 
 ```sh
 sudo make install-udev-rules      # installs udev/99-wchlink.rules
 # then replug the programmer
 ```
 
-Without them, libusb sees the device but cannot open it, and `wchlink` says so
-rather than claiming no programmer is attached.
+The installed rule combines two mechanisms:
+
+* `TAG+="uaccess"`, which systemd-logind turns into an ACL for the active local
+  session user;
+* `MODE="0660", GROUP="plugdev"`, the Debian/Ubuntu group convention.
+
+If the group path is used, make sure your user is in `plugdev` and start a new
+login session after `usermod -aG plugdev $USER`; the current shell's
+group list is fixed when it logs in.
+
+Without any rule, libusb sees the device but cannot open it, and `wchlink`
+says so rather than claiming no programmer is attached.
 
 ## Usage
 
