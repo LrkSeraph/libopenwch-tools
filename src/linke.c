@@ -205,6 +205,18 @@ enum wl_status wl_linke_reset(wl_linke_t *link) {
 	size_t length = 0;
 	enum wl_status status;
 
+	/*
+	 * The programmer only drives the target reset line while it is
+	 * attached.  Without this attach, a reset issued to a running target
+	 * is silently ignored, which is why `target reset` used to need a
+	 * preceding `target halt` to have any effect.
+	 */
+	status = wl_linke_halt(link);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
 	/* Take the reset line low, then let go of it and run. */
 	status = send_control(link, WL_CMD_CONTROL, WL_CTL_RESET_LOW, reply,
 			      sizeof(reply), &length);

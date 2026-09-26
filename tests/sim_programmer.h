@@ -78,6 +78,9 @@ void wl_sim_flash_fill(struct wl_sim *sim,
 /** Change one byte of flash behind the tool's back, to test verification. */
 void wl_sim_flash_poke(struct wl_sim *sim, uint32_t offset, uint8_t value);
 
+/** How many times the tool has driven the target reset line. */
+unsigned wl_sim_reset_count(const struct wl_sim *sim);
+
 /** How many pages the tool has erased. */
 unsigned wl_sim_erase_count(const struct wl_sim *sim);
 

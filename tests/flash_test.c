@@ -151,6 +151,31 @@ static void test_identify_after_attach(wl_linke_t *link,
 	wl_sim_set_fail_attach_while_attached(sim, false);
 }
 
+static void test_reset_attaches_first(const wl_chip_t *chip) {
+	struct wl_sim *sim = wl_sim_new(chip);
+	wl_linke_t link;
+
+	CHECK(sim != NULL);
+
+	if (sim == NULL) {
+		return;
+	}
+
+	wl_linke_attach_transport(&link, wl_sim_transport(),
+				  wl_sim_context(sim));
+
+	/*
+	 * A running target has not been attached yet.  Reset must attach first,
+	 * or the reset-low request is ignored and the target never resets.
+	 */
+	CHECK_EQ(wl_linke_reset(&link), WL_OK);
+	CHECK_EQ(wl_sim_reset_count(sim), 1);
+	CHECK(!wl_sim_halted(sim));
+
+	wl_linke_detach(&link);
+	wl_sim_free(sim);
+}
+
 static void test_pc(wl_linke_t *link, const wl_chip_t *chip) {
 	uint32_t pc = 0;
 
@@ -478,6 +503,7 @@ int main(void) {
 	test_version(&link);
 	test_identify(&link, chip);
 	test_identify_after_attach(&link, chip, sim);
+	test_reset_attaches_first(chip);
 	CHECK_EQ(wl_linke_set_interface(&link, chip), WL_OK);
 	test_pc(&link, chip);
 	test_registers(&link);

@@ -67,6 +67,7 @@ struct wl_sim {
 	uint8_t interface_speed;
 	bool attached;
 	bool fail_attach_while_attached;
+	unsigned resets;
 
 	/* Debug module state. */
 	uint32_t dmi[128];
@@ -687,6 +688,16 @@ static int sim_command(void *ctx,
 			reply[6] = 0x05;
 			reply[7] = 0x00;
 			length = 8;
+		} else if (sub == 0x13u) { /* drive reset low */
+			if (sim->attached) {
+				sim->resets++;
+			}
+
+			reply[0] = 0x82;
+			reply[1] = 0x0d;
+			reply[2] = 0x05;
+			reply[3] = 0x09;
+			length = 4;
 		} else {
 			if (sub == 0xffu) {
 				sim->attached = false;
@@ -874,6 +885,10 @@ void wl_sim_flash_poke(struct wl_sim *sim, uint32_t offset, uint8_t value) {
 	if (offset < sim->flash_size) {
 		sim->flash[offset] = value;
 	}
+}
+
+unsigned wl_sim_reset_count(const struct wl_sim *sim) {
+	return sim->resets;
 }
 
 unsigned wl_sim_erase_count(const struct wl_sim *sim) {
