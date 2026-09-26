@@ -185,6 +185,24 @@ enum wl_status wl_dm_gpr_read(wl_linke_t *link, unsigned reg, uint32_t *value) {
 	return dm_command(link, command, 0, false, value);
 }
 
+enum wl_status wl_dm_pc_read(wl_linke_t *link, uint32_t *value) {
+	uint32_t command;
+
+	if (value == NULL) {
+		return WL_ERR_USAGE;
+	}
+
+	/*
+	 * dpc is not reachable through the programmer's 8-bit DMI register
+	 * command.  It is an abstract-command register number, exactly as PC
+	 * is read by minichlink: cmdtype 0, aarsize 2, transfer, regno
+	 * 0x7b1.  The 0x08 command would truncate the address to 0xb1.
+	 */
+	command = WL_DM_CMD_GPR_BASE | WL_DM_CMD_TRANSFER | WL_DMI_DPC;
+
+	return dm_command(link, command, 0, false, value);
+}
+
 static enum wl_status
 dm_load_program(wl_linke_t *link, const uint32_t *program, size_t words) {
 	size_t i;

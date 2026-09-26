@@ -470,3 +470,19 @@ void wl_linke_close(wl_linke_t *link) {
 	wl_linke_detach(link);
 	wl_usb_close(usb);
 }
+
+void wl_linke_close_keep_target(wl_linke_t *link) {
+	wl_usb_link_t *usb;
+
+	if (link == NULL) {
+		return;
+	}
+
+	usb = (wl_usb_link_t *)link->ctx;
+
+	link->open = false;
+	link->transport = NULL;
+	link->ctx = NULL;
+
+	wl_usb_close(usb);
+}

@@ -81,6 +81,7 @@ wchlink read  <file.bin>     read target memory into a file
 wchlink reset                reset the target and let it run
 wchlink unbrick              hold the target in reset and power-cycle it
 wchlink programmer <sub>     inspect or control the WCH-LinkE itself
+wchlink target <sub>         debug the target core
 wchlink terminal             single-wire debug terminal         (milestone 4)
 ```
 
@@ -92,6 +93,22 @@ wchlink programmer list      list every WCH programmer found on the bus
 wchlink programmer rv        switch an ARM/SWD LinkE to RISC-V debug mode
 wchlink programmer iap       eject an IAP-bootloader LinkE
 ```
+
+`target` debug subcommands:
+
+```
+wchlink target halt          halt the core and leave it halted
+wchlink target resume        release the core so it runs
+wchlink target reset         reset the core and let it run
+wchlink target pc            read the halted program counter
+wchlink target regs          read pc and x0-x31
+wchlink target read32 <addr>       read one 32-bit target word
+wchlink target write32 <addr> <v>  write one 32-bit target word
+```
+
+`target halt`, `pc`, `regs`, `read32` and `write32` leave the target halted
+when the command exits, so a sequence of reads sees one stable state.  Use
+`target resume` when done.
 
 Options: `--serial`, `--chip`, `--address`, `--size`, `--verify`, `--no-verify`,
 `--verbose`, `--quiet`, `--version`, `--help`.

@@ -135,6 +135,13 @@ static void test_identify(wl_linke_t *link, const wl_chip_t *chip) {
 	CHECK(detected == chip);
 }
 
+static void test_pc(wl_linke_t *link, const wl_chip_t *chip) {
+	uint32_t pc = 0;
+
+	CHECK_EQ(wl_dm_pc_read(link, &pc), WL_OK);
+	CHECK_EQ(pc, chip->flash_base);
+}
+
 static void test_registers(wl_linke_t *link) {
 	uint32_t value = 0;
 
@@ -455,6 +462,7 @@ int main(void) {
 	test_version(&link);
 	test_identify(&link, chip);
 	CHECK_EQ(wl_linke_set_interface(&link, chip), WL_OK);
+	test_pc(&link, chip);
 	test_registers(&link);
 	test_memory_roundtrip(&link, chip);
 

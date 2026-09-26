@@ -65,6 +65,18 @@ check_exit "$?" "unknown part is a usage error" 2
 "$PROJECT" programmer nosuchsub >/dev/null 2>&1
 check_exit "$?" "unknown programmer subcommand is a usage error" 2
 
+"$PROJECT" target >/dev/null 2>&1
+check_exit "$?" "target without a subcommand is a usage error" 2
+
+"$PROJECT" target nosuchsub >/dev/null 2>&1
+check_exit "$?" "unknown target subcommand is a usage error" 2
+
+"$PROJECT" target read32 >/dev/null 2>&1
+check_exit "$?" "target read32 without an address is a usage error" 2
+
+"$PROJECT" target write32 0x20000000 >/dev/null 2>&1
+check_exit "$?" "target write32 without a value is a usage error" 2
+
 "$PROJECT" read >/dev/null 2>&1
 check_exit "$?" "read without a file is a usage error" 2
 

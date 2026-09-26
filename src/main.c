@@ -42,6 +42,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "dm.h"
 #include "flash.h"
 #include "linke.h"
 #include "log.h"
@@ -55,10 +56,14 @@
 
 static const char *program_name = "wchlink";
 
+#define WL_TARGET_EXTRA_MAX 4
+
 struct options {
 	const char *serial;
 	const char *chip;
 	const char *file;
+	const char *extra[WL_TARGET_EXTRA_MAX];
+	size_t extra_count;
 	uint32_t address;
 	size_t size;
 	bool address_given;
@@ -83,6 +88,10 @@ static void usage(FILE *out) {
 	    "it\n"
 	    "  programmer <sub>     inspect or control the WCH-LinkE itself\n"
 	    "                       subcommands: info, list, rv, iap\n"
+	    "  target <sub>         debug the target: halt, resume, reset, "
+	    "pc,\n"
+	    "                       regs, read32 <addr>, write32 <addr> "
+	    "<value>\n"
 	    "  terminal             single-wire debug terminal (milestone 4)\n"
 	    "\n"
 	    "Options:\n"
@@ -710,6 +719,283 @@ static enum wl_status cmd_programmer(const struct options *opts) {
 	return WL_ERR_USAGE;
 }
 
+/** Open the target path and leave the chosen core halted for DMI access. */
+static enum wl_status open_target_debug(const struct options *opts,
+					wl_linke_t *link,
+					const wl_chip_t **chip) {
+	const wl_chip_t *resolved = NULL;
+	enum wl_status status;
+
+	if (opts->chip != NULL) {
+		resolved = require_chip(opts);
+
+		if (resolved == NULL) {
+			return WL_ERR_USAGE;
+		}
+	}
+
+	status = wl_linke_open(link, opts->serial);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	if (resolved == NULL) {
+		status = wl_linke_identify_chip(link, &resolved);
+
+		if (status != WL_OK) {
+			wl_error("cannot auto-detect the target; connect it, "
+				 "or pass --chip");
+			wl_linke_close(link);
+			return status;
+		}
+
+		wl_info("detected target %s", resolved->name);
+	}
+
+	status = wl_linke_set_interface(link, resolved);
+
+	if (status != WL_OK) {
+		wl_linke_close(link);
+		return status;
+	}
+
+	status = wl_linke_halt(link);
+
+	if (status != WL_OK) {
+		wl_linke_close(link);
+		return status;
+	}
+
+	*chip = resolved;
+
+	return WL_OK;
+}
+
+static enum wl_status cmd_target_halt(const struct options *opts) {
+	wl_linke_t link;
+	enum wl_status status = wl_linke_open(&link, opts->serial);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_linke_halt(&link);
+
+	wl_linke_close_keep_target(&link);
+
+	if (status == WL_OK) {
+		wl_info("target halted");
+	}
+
+	return status;
+}
+
+static enum wl_status cmd_target_resume(const struct options *opts) {
+	wl_linke_t link;
+	enum wl_status status = wl_linke_open(&link, opts->serial);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_linke_resume(&link);
+
+	wl_linke_close(&link);
+
+	if (status == WL_OK) {
+		wl_info("target resumed");
+	}
+
+	return status;
+}
+
+static enum wl_status cmd_target_reset(const struct options *opts) {
+	wl_linke_t link;
+	enum wl_status status = wl_linke_open(&link, opts->serial);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_linke_reset(&link);
+
+	wl_linke_close(&link);
+
+	if (status == WL_OK) {
+		wl_info("target reset");
+	}
+
+	return status;
+}
+
+static enum wl_status cmd_target_pc(const struct options *opts) {
+	wl_linke_t link;
+	const wl_chip_t *chip = NULL;
+	uint32_t pc = 0;
+	enum wl_status status = open_target_debug(opts, &link, &chip);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_dm_pc_read(&link, &pc);
+
+	wl_linke_close_keep_target(&link);
+
+	if (status == WL_OK) {
+		printf("pc  = 0x%08x\n", pc);
+	}
+
+	return status;
+}
+
+static enum wl_status cmd_target_regs(const struct options *opts) {
+	wl_linke_t link;
+	const wl_chip_t *chip = NULL;
+	uint32_t pc = 0;
+	unsigned reg;
+	enum wl_status status = open_target_debug(opts, &link, &chip);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_dm_pc_read(&link, &pc);
+
+	if (status != WL_OK) {
+		wl_linke_close_keep_target(&link);
+		return status;
+	}
+
+	printf("pc  = 0x%08x\n", pc);
+
+	for (reg = 0; reg < 32; reg++) {
+		uint32_t value = 0;
+
+		status = wl_dm_gpr_read(&link, reg, &value);
+
+		if (status != WL_OK) {
+			wl_linke_close_keep_target(&link);
+			return status;
+		}
+
+		printf("x%-2u = 0x%08x\n", reg, value);
+	}
+
+	wl_linke_close_keep_target(&link);
+
+	return WL_OK;
+}
+
+static enum wl_status cmd_target_read32(const struct options *opts) {
+	wl_linke_t link;
+	const wl_chip_t *chip = NULL;
+	uint32_t address;
+	uint32_t value = 0;
+	enum wl_status status;
+
+	if (opts->extra_count < 1 || !parse_u32(opts->extra[0], &address)) {
+		wl_error("target read32 needs an address, e.g. "
+			 "`target read32 0x08000000`");
+		return WL_ERR_USAGE;
+	}
+
+	status = open_target_debug(opts, &link, &chip);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_dm_read32(&link, address, &value);
+
+	wl_linke_close_keep_target(&link);
+
+	if (status == WL_OK) {
+		printf("0x%08x = 0x%08x\n", address, value);
+	}
+
+	return status;
+}
+
+static enum wl_status cmd_target_write32(const struct options *opts) {
+	wl_linke_t link;
+	const wl_chip_t *chip = NULL;
+	uint32_t address;
+	uint32_t value;
+	enum wl_status status;
+
+	if (opts->extra_count < 2 || !parse_u32(opts->extra[0], &address) ||
+	    !parse_u32(opts->extra[1], &value)) {
+		wl_error("target write32 needs address and value, e.g. "
+			 "`target write32 0x20000000 0x12345678`");
+		return WL_ERR_USAGE;
+	}
+
+	status = open_target_debug(opts, &link, &chip);
+
+	if (status != WL_OK) {
+		return status;
+	}
+
+	status = wl_dm_write32(&link, address, value);
+
+	wl_linke_close_keep_target(&link);
+
+	if (status == WL_OK) {
+		printf("0x%08x <- 0x%08x\n", address, value);
+	}
+
+	return status;
+}
+
+/** Target debug subcommands.  The subcommand is opts->file, as for
+ * `programmer`; read32/write32 take their remaining arguments from
+ * opts->extra[]. */
+static enum wl_status cmd_target(const struct options *opts) {
+	const char *sub = opts->file;
+
+	if (sub == NULL) {
+		wl_error("target needs a subcommand: halt, resume, reset, pc, "
+			 "regs, read32, write32");
+		return WL_ERR_USAGE;
+	}
+
+	if (strcmp(sub, "halt") == 0) {
+		return cmd_target_halt(opts);
+	}
+
+	if (strcmp(sub, "resume") == 0) {
+		return cmd_target_resume(opts);
+	}
+
+	if (strcmp(sub, "reset") == 0) {
+		return cmd_target_reset(opts);
+	}
+
+	if (strcmp(sub, "pc") == 0) {
+		return cmd_target_pc(opts);
+	}
+
+	if (strcmp(sub, "regs") == 0) {
+		return cmd_target_regs(opts);
+	}
+
+	if (strcmp(sub, "read32") == 0) {
+		return cmd_target_read32(opts);
+	}
+
+	if (strcmp(sub, "write32") == 0) {
+		return cmd_target_write32(opts);
+	}
+
+	wl_error("unknown target subcommand '%s'", sub);
+	wl_error("expected one of: halt, resume, reset, pc, regs, read32, "
+		 "write32");
+
+	return WL_ERR_USAGE;
+}
+
 /* --- command line ------------------------------------------------------- */
 
 static int status_to_exit(enum wl_status status) {
@@ -833,6 +1119,12 @@ int main(int argc, char **argv) {
 			continue;
 		}
 
+		if (strcmp(command, "target") == 0 &&
+		    opts.extra_count < WL_TARGET_EXTRA_MAX) {
+			opts.extra[opts.extra_count++] = arg;
+			continue;
+		}
+
 		wl_error("unexpected argument '%s'", arg);
 		return 2;
 	}
@@ -880,6 +1172,8 @@ int main(int argc, char **argv) {
 		}
 	} else if (strcmp(command, "programmer") == 0) {
 		status = cmd_programmer(&opts);
+	} else if (strcmp(command, "target") == 0) {
+		status = cmd_target(&opts);
 	} else if (strcmp(command, "reset") == 0) {
 		status = cmd_reset(&opts);
 	} else if (strcmp(command, "unbrick") == 0) {

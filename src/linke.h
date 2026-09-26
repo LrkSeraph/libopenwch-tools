@@ -132,6 +132,15 @@ void wl_linke_detach(wl_linke_t *link);
 /** Close a programmer opened with wl_linke_open(). */
 void wl_linke_close(wl_linke_t *link);
 
+/**
+ * Close the USB handle but leave the target halted.
+ *
+ * wl_linke_close() releases the target so it runs again.  Debug commands
+ * that are explicitly about the halted state need the opposite: detach the
+ * host process without telling the programmer to release reset/halt.
+ */
+void wl_linke_close_keep_target(wl_linke_t *link);
+
 /* --- the request layer -------------------------------------------------- */
 
 /**

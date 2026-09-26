@@ -47,6 +47,8 @@
 #define WL_DMI_DMPROGBUF5 0x25
 #define WL_DMI_DMPROGBUF6 0x26
 #define WL_DMI_DMPROGBUF7 0x27
+#define WL_DMI_DCSR 0x7b0
+#define WL_DMI_DPC 0x7b1
 
 /** How many instruction words the program buffer holds. */
 #define WL_DM_PROGBUF_WORDS 8
@@ -62,6 +64,15 @@ enum wl_status wl_dm_gpr_read(wl_linke_t *link, unsigned reg, uint32_t *value);
 
 /** Write one target general-purpose register. */
 enum wl_status wl_dm_gpr_write(wl_linke_t *link, unsigned reg, uint32_t value);
+
+/**
+ * Read the halted target's program counter.
+ *
+ * The RISC-V debug module exposes its stopped PC through DMI register
+ * WL_DMI_DPC (0x7b1).  The target must already be halted and configured for
+ * a chip, because that is what makes the DMI access legal.
+ */
+enum wl_status wl_dm_pc_read(wl_linke_t *link, uint32_t *value);
 
 /**
  * Load a program into the program buffer and run it.

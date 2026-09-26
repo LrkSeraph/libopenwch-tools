@@ -68,6 +68,8 @@ struct wl_sim {
 	uint32_t gpr[32];
 	uint32_t progbuf[8];
 	uint32_t pc;
+	uint32_t dpc;
+	uint32_t dcsr;
 	uint32_t cmderr;
 
 	/* Flash controller state. */
@@ -434,25 +436,41 @@ static void sim_execute_command(struct wl_sim *sim, uint32_t command) {
 	}
 
 	if (transfer) {
-		if (regno < 0x1000u || regno > 0x101fu) {
-			sim->cmderr = 2; /* only the general registers here */
-			return;
-		}
+		uint32_t value;
 
-		gpr = regno - 0x1000u;
-
-		if (write) {
-			sim->gpr[gpr] = gpr == 0 ? 0 : sim->dmi[WL_DMI_DATA0];
-		} else {
-			uint32_t value = sim->gpr[gpr];
-
-			if (aarsize == 0) {
-				value &= 0xffu;
-			} else if (aarsize == 1) {
-				value &= 0xffffu;
+		if (regno == WL_DMI_DPC || regno == WL_DMI_DCSR) {
+			/* dpc/dcsr are abstract-command register numbers, not
+			 * 8-bit DMI addresses. */
+			if (write) {
+				if (regno == WL_DMI_DPC) {
+					sim->dpc = sim->dmi[WL_DMI_DATA0];
+				} else {
+					sim->dcsr = sim->dmi[WL_DMI_DATA0];
+				}
+			} else {
+				sim->dmi[WL_DMI_DATA0] =
+				    regno == WL_DMI_DPC ? sim->dpc : sim->dcsr;
 			}
+		} else if (regno >= 0x1000u && regno <= 0x101fu) {
+			gpr = regno - 0x1000u;
 
-			sim->dmi[WL_DMI_DATA0] = value;
+			if (write) {
+				sim->gpr[gpr] =
+				    gpr == 0 ? 0 : sim->dmi[WL_DMI_DATA0];
+			} else {
+				value = sim->gpr[gpr];
+
+				if (aarsize == 0) {
+					value &= 0xffu;
+				} else if (aarsize == 1) {
+					value &= 0xffffu;
+				}
+
+				sim->dmi[WL_DMI_DATA0] = value;
+			}
+		} else {
+			sim->cmderr = 2; /* unsupported register */
+			return;
 		}
 	}
 
@@ -699,6 +717,7 @@ struct wl_sim *wl_sim_new(const wl_chip_t *chip) {
 	}
 
 	sim->chip = chip;
+	sim->dpc = chip->flash_base;
 	sim->flash_size = chip->flash_size;
 	sim->ram_size = chip->ram_size;
 	sim->flash = malloc(sim->flash_size);
