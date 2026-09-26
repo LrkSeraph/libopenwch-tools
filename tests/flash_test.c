@@ -135,6 +135,22 @@ static void test_identify(wl_linke_t *link, const wl_chip_t *chip) {
 	CHECK(detected == chip);
 }
 
+static void test_identify_after_attach(wl_linke_t *link,
+				       const wl_chip_t *chip,
+				       struct wl_sim *sim) {
+	const wl_chip_t *detected = NULL;
+
+	/*
+	 * A previous target command leaves the programmer attached.  Real
+	 * LinkE firmware can refuse a second attach with no chip-id block;
+	 * identify must release and retry instead of failing auto-detection.
+	 */
+	wl_sim_set_fail_attach_while_attached(sim, true);
+	CHECK_EQ(wl_linke_identify_chip(link, &detected), WL_OK);
+	CHECK(detected == chip);
+	wl_sim_set_fail_attach_while_attached(sim, false);
+}
+
 static void test_pc(wl_linke_t *link, const wl_chip_t *chip) {
 	uint32_t pc = 0;
 
@@ -461,6 +477,7 @@ int main(void) {
 
 	test_version(&link);
 	test_identify(&link, chip);
+	test_identify_after_attach(&link, chip, sim);
 	CHECK_EQ(wl_linke_set_interface(&link, chip), WL_OK);
 	test_pc(&link, chip);
 	test_registers(&link);

@@ -66,6 +66,7 @@ struct wl_sim {
 	uint8_t chip_id;
 	uint8_t interface_speed;
 	bool attached;
+	bool fail_attach_while_attached;
 
 	/* Debug module state. */
 	uint32_t dmi[128];
@@ -661,8 +662,19 @@ static int sim_command(void *ctx,
 			reply[6] = 0x00;
 			length = 7;
 		} else if (sub == 0x02u) { /* attach and report family/model */
-			uint16_t model =
-			    sim->chip != NULL ? sim->chip->model_id : 0u;
+			uint16_t model;
+
+			if (sim->attached && sim->fail_attach_while_attached) {
+				/* No chip-id block: the caller must release and retry. */
+				reply[0] = 0x82;
+				reply[1] = 0x0d;
+				reply[2] = 0x05;
+				reply[3] = 0x09;
+				length = 4;
+				break;
+			}
+
+			model = sim->chip != NULL ? sim->chip->model_id : 0u;
 
 			sim->attached = true;
 
@@ -878,6 +890,10 @@ unsigned wl_sim_program_errors(const struct wl_sim *sim) {
 
 unsigned wl_sim_illegal_instructions(const struct wl_sim *sim) {
 	return sim->illegal;
+}
+
+void wl_sim_set_fail_attach_while_attached(struct wl_sim *sim, bool fail) {
+	sim->fail_attach_while_attached = fail;
 }
 
 bool wl_sim_halted(const struct wl_sim *sim) {

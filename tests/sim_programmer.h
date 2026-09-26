@@ -100,4 +100,11 @@ unsigned wl_sim_illegal_instructions(const struct wl_sim *sim);
 /** Whether the target is being held halted by the programmer. */
 bool wl_sim_halted(const struct wl_sim *sim);
 
+/**
+ * Emulate LinkE firmware that refuses a second attach while already
+ * attached, which is what makes auto-detection fail after a debug command
+ * left the target halted.  Release must clear the condition.
+ */
+void wl_sim_set_fail_attach_while_attached(struct wl_sim *sim, bool fail);
+
 #endif /* WCHLINK_TESTS_SIM_PROGRAMMER_H */

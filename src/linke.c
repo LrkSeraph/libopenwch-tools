@@ -319,18 +319,14 @@ static enum wl_status set_interface_raw(wl_linke_t *link,
 	return WL_OK;
 }
 
-enum wl_status wl_linke_identify_chip(wl_linke_t *link,
-				      const wl_chip_t **chip) {
+static enum wl_status identify_chip_once(wl_linke_t *link,
+					 const wl_chip_t **chip) {
 	uint8_t reply[WL_REPLY_MAX];
 	size_t length = 0;
 	enum wl_status status;
 	const wl_chip_t *found;
 	uint8_t family_id;
 	uint16_t model_id;
-
-	if (chip == NULL) {
-		return WL_ERR_USAGE;
-	}
 
 	*chip = NULL;
 
@@ -380,6 +376,32 @@ enum wl_status wl_linke_identify_chip(wl_linke_t *link,
 	*chip = found;
 
 	return WL_OK;
+}
+
+enum wl_status wl_linke_identify_chip(wl_linke_t *link,
+				      const wl_chip_t **chip) {
+	enum wl_status status;
+
+	if (chip == NULL) {
+		return WL_ERR_USAGE;
+	}
+
+	status = identify_chip_once(link, chip);
+
+	if (status == WL_OK) {
+		return WL_OK;
+	}
+
+	/*
+	 * A previous `target read32`/`halt` can leave the programmer attached
+	 * with the core stopped.  Some LinkE firmware then does not answer a
+	 * second attach with the chip-id block.  Detach first, which lets the
+	 * target run, and try the whole detection sequence once more.
+	 */
+	wl_debug("chip detection failed; releasing the target and retrying");
+	(void)send_control(link, WL_CMD_CONTROL, WL_CTL_RELEASE, NULL, 0, NULL);
+
+	return identify_chip_once(link, chip);
 }
 
 enum wl_status wl_linke_set_interface(wl_linke_t *link, const wl_chip_t *chip) {
