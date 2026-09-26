@@ -407,10 +407,17 @@ enum wl_status wl_linke_identify_chip(wl_linke_t *link,
 	/*
 	 * A previous `target read32`/`halt` can leave the programmer attached
 	 * with the core stopped.  Some LinkE firmware then does not answer a
-	 * second attach with the chip-id block.  Detach first, which lets the
-	 * target run, and try the whole detection sequence once more.
+	 * second attach with the chip-id block.  Let the target run first, then
+	 * try the whole detection sequence once more.
 	 */
-	wl_debug("chip detection failed; releasing the target and retrying");
+	wl_debug("chip detection failed; letting the target run and retrying");
+
+	/*
+	 * A plain release can leave the core halted by the debug module.
+	 * Mirror wl_linke_resume()'s first step as well, so the retry sees a
+	 * target in the same state as a fresh power-up.
+	 */
+	(void)send_control(link, WL_CMD_RUN, 0x01, NULL, 0, NULL);
 	(void)send_control(link, WL_CMD_CONTROL, WL_CTL_RELEASE, NULL, 0, NULL);
 
 	return identify_chip_once(link, chip);
